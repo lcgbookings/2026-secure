@@ -1,0 +1,157 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { normaliseSystemeBooking } from '@/lib/webhooks/systeme/normalise';
+import type { SystemeBookingPayload } from '@/lib/webhooks/systeme/types';
+
+// Disable static analysis; this route uses runtime headers and DB writes.
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
+function jsonError(message: string, status: number, detail?: unknown) {
+  return NextResponse.json({ error: message, detail }, { status });
+}
+
+export async function POST(req: NextRequest) {
+  // 1. Validate webhook secret
+  const expectedSecret = process.env.SYSTEME_WEBHOOK_SECRET;
+  if (!expectedSecret) {
+    console.error('[systeme webhook] SYSTEME_WEBHOOK_SECRET not configured');
+    return jsonError('Server misconfigured', 500);
+  }
+
+  const providedSecret =
+    req.headers.get('x-webhook-secret') ??
+    req.headers.get('x-systeme-secret') ??
+    new URL(req.url).searchParams.get('secret');
+
+  if (providedSecret !== expectedSecret) {
+    console.warn('[systeme webhook] Invalid or missing secret');
+    return jsonError('Unauthorised', 401);
+  }
+
+  // 2. Parse payload
+  let payload: SystemeBookingPayload;
+  try {
+    payload = (await req.json()) as SystemeBookingPayload;
+  } catch (err) {
+    console.error('[systeme webhook] Failed to parse JSON', err);
+    return jsonError('Invalid JSON', 400);
+  }
+
+  // 3. Validate required fields
+  if (!payload?.customer?.email || !payload?.order?.id) {
+    console.error('[systeme webhook] Missing required fields', payload);
+    return jsonError('Missing required fields', 422);
+  }
+
+  // 4. Normalise
+  const normalised = normaliseSystemeBooking(payload);
+  const supabase = createAdminClient();
+
+  try {
+    // 5. Upsert attendee by email
+    const { data: attendee, error: attendeeError } = await supabase
+      .from('attendees')
+      .upsert(
+        {
+          email: normalised.attendee.email,
+          first_name: normalised.attendee.firstName || 'Unknown',
+          last_name: normalised.attendee.lastName || 'Unknown',
+          phone: normalised.attendee.phone,
+          systeme_contact_id: normalised.attendee.systemeContactId,
+          systeme_customer_id: normalised.attendee.systemeCustomerId,
+          source: 'systeme_io',
+        },
+        { onConflict: 'email', ignoreDuplicates: false }
+      )
+      .select('id')
+      .single();
+
+    if (attendeeError || !attendee) {
+      console.error('[systeme webhook] Attendee upsert failed', attendeeError);
+      return jsonError('Database error (attendee)', 500, attendeeError?.message);
+    }
+
+    // 6. Check if booking already exists (idempotency)
+    const { data: existingBooking } = await supabase
+      .from('bookings')
+      .select('id')
+      .eq('external_booking_id', normalised.booking.externalBookingId)
+      .maybeSingle();
+
+    let bookingId: string;
+
+    if (existingBooking) {
+      bookingId = existingBooking.id;
+      console.log('[systeme webhook] Booking already exists, idempotent return', bookingId);
+    } else {
+      const { data: booking, error: bookingError } = await supabase
+        .from('bookings')
+        .insert({
+          booking_type: 'event_ticket',
+          attendee_id: attendee.id,
+          event_id: null,
+          external_booking_id: normalised.booking.externalBookingId,
+          external_source: 'systeme_io',
+          ticket_type: normalised.booking.ticketType,
+          booking_status: 'confirmed',
+          confirmation_status: 'pending',
+          attendance_status: 'pending',
+        })
+        .select('id')
+        .single();
+
+      if (bookingError || !booking) {
+        console.error('[systeme webhook] Booking insert failed', bookingError);
+        return jsonError('Database error (booking)', 500, bookingError?.message);
+      }
+      bookingId = booking.id;
+    }
+
+    // 7. Check if payment already exists (idempotency)
+    const { data: existingPayment } = await supabase
+      .from('payments')
+      .select('id')
+      .eq('external_payment_id', normalised.payment.externalPaymentId)
+      .maybeSingle();
+
+    if (!existingPayment) {
+      const { error: paymentError } = await supabase.from('payments').insert({
+        attendee_id: attendee.id,
+        booking_id: bookingId,
+        external_payment_id: normalised.payment.externalPaymentId,
+        amount_gross: normalised.payment.amountGross,
+        currency: normalised.payment.currency,
+        payment_type: 'ticket',
+        status: 'succeeded',
+        paid_at: normalised.payment.paidAt,
+        metadata: {
+          funnel_name: normalised.meta.funnelName,
+          funnel_step_name: normalised.meta.funnelStepName,
+          tag_name: normalised.meta.tagName,
+          source_url: normalised.meta.sourceUrl,
+        },
+      });
+
+      if (paymentError) {
+        console.error('[systeme webhook] Payment insert failed', paymentError);
+        return jsonError('Database error (payment)', 500, paymentError?.message);
+      }
+    }
+
+    return NextResponse.json({
+      ok: true,
+      attendeeId: attendee.id,
+      bookingId,
+      message: existingBooking ? 'Idempotent: booking already existed' : 'Booking created',
+    });
+  } catch (err) {
+    console.error('[systeme webhook] Unhandled error', err);
+    return jsonError('Internal server error', 500, err instanceof Error ? err.message : String(err));
+  }
+}
+
+// Reject anything that's not POST
+export async function GET() {
+  return jsonError('Method not allowed', 405);
+}
