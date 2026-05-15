@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { normaliseSystemeBooking } from '@/lib/webhooks/systeme/normalise';
 import type { SystemeBookingPayload } from '@/lib/webhooks/systeme/types';
@@ -19,20 +20,47 @@ export async function POST(req: NextRequest) {
     return jsonError('Server misconfigured', 500);
   }
 
+  // Read raw body once (needed for HMAC verification)
+  const rawBody = await req.text();
+
+  // Try plain shared-secret first (used by our curl tests and the radio form)
   const providedSecret =
     req.headers.get('x-webhook-secret') ??
     req.headers.get('x-systeme-secret') ??
     new URL(req.url).searchParams.get('secret');
 
-  if (providedSecret !== expectedSecret) {
-    console.warn('[systeme webhook] Invalid or missing secret');
+  let authorised = false;
+
+  if (providedSecret && providedSecret === expectedSecret) {
+    authorised = true;
+  } else {
+    // Try HMAC signature (used by Systeme.io)
+    const signatureHeader = req.headers.get('x-webhook-signature');
+    if (signatureHeader) {
+      const computed = createHmac('sha256', expectedSecret)
+        .update(rawBody, 'utf8')
+        .digest('hex');
+      try {
+        const a = Buffer.from(signatureHeader, 'hex');
+        const b = Buffer.from(computed, 'hex');
+        if (a.length === b.length && timingSafeEqual(a, b)) {
+          authorised = true;
+        }
+      } catch {
+        // Malformed signature header - leave authorised = false
+      }
+    }
+  }
+
+  if (!authorised) {
+    console.warn('[systeme webhook] Invalid or missing signature/secret');
     return jsonError('Unauthorised', 401);
   }
 
   // 2. Parse payload
   let payload: SystemeBookingPayload;
   try {
-    payload = (await req.json()) as SystemeBookingPayload;
+    payload = JSON.parse(rawBody) as SystemeBookingPayload;
   } catch (err) {
     console.error('[systeme webhook] Failed to parse JSON', err);
     return jsonError('Invalid JSON', 400);
