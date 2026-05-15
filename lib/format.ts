@@ -1,4 +1,7 @@
-import { format, formatDistanceToNowStrict } from 'date-fns';
+import { formatInTimeZone } from 'date-fns-tz';
+import { formatDistanceToNowStrict } from 'date-fns';
+
+const LONDON_TZ = 'Europe/London';
 
 export function formatMoney(pence: number, currency = 'gbp'): string {
   const symbol = currency.toLowerCase() === 'gbp' ? '£' : '$';
@@ -6,11 +9,9 @@ export function formatMoney(pence: number, currency = 'gbp'): string {
 }
 
 export function formatEventDateTime(startIso: string, endIso: string): string {
-  const start = new Date(startIso);
-  const end = new Date(endIso);
-  const datePart = format(start, 'EEEE, MMMM d');
-  const startTime = format(start, 'h:mma').toLowerCase();
-  const endTime = format(end, 'h:mma').toLowerCase();
+  const datePart = formatInTimeZone(new Date(startIso), LONDON_TZ, 'EEEE, MMMM d');
+  const startTime = formatInTimeZone(new Date(startIso), LONDON_TZ, 'h:mma').toLowerCase();
+  const endTime = formatInTimeZone(new Date(endIso), LONDON_TZ, 'h:mma').toLowerCase();
   return `${datePart}, ${startTime} to ${endTime}`;
 }
 
