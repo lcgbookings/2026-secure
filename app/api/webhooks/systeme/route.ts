@@ -108,6 +108,51 @@ export async function POST(req: NextRequest) {
       bookingId = booking.id;
     }
 
+    // After booking is created/found, try to link an event from pending selections.
+    // Only attempt if booking has no event yet AND payment succeeded (this webhook fires after payment confirmation).
+    if (!existingBooking) {
+      // Booking was just created with event_id=NULL. Try to find a matching pending selection.
+      const { data: pending } = await supabase
+        .from('pending_event_selections')
+        .select('id, matched_event_id, masterclass_date_label')
+        .eq('email', normalised.attendee.email)
+        .is('consumed_at', null)
+        .gt('expires_at', new Date().toISOString())
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (pending) {
+        // Mark consumed first to avoid double-consumption on retries.
+        await supabase
+          .from('pending_event_selections')
+          .update({
+            consumed_at: new Date().toISOString(),
+            consumed_by_booking_id: bookingId,
+          })
+          .eq('id', pending.id);
+
+        // If the pending row had a matched event, link it to the booking.
+        if (pending.matched_event_id) {
+          await supabase
+            .from('bookings')
+            .update({ event_id: pending.matched_event_id })
+            .eq('id', bookingId);
+          console.log(
+            `[systeme webhook] Linked booking ${bookingId} to event ${pending.matched_event_id} via pending selection`
+          );
+        } else {
+          console.log(
+            `[systeme webhook] Pending selection found for ${normalised.attendee.email} but no event matched label "${pending.masterclass_date_label}"`
+          );
+        }
+      } else {
+        console.log(
+          `[systeme webhook] No pending event selection found for ${normalised.attendee.email}`
+        );
+      }
+    }
+
     // 7. Check if payment already exists (idempotency)
     const { data: existingPayment } = await supabase
       .from('payments')
