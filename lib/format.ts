@@ -114,3 +114,27 @@ export function labelCoachingInterest(s: string | null): string {
     other: 'Other',
   }[s] ?? s;
 }
+
+export function labelAttemptType(s: string | null): string {
+  if (!s) return '-';
+  return {
+    initial: 'Initial call',
+    '24h_reminder': '24-hour reminder',
+    stale_followup: 'Stale follow-up',
+    post_event: 'Post-event follow-up',
+  }[s] ?? s;
+}
+
+export function labelOutcome(s: string | null): string {
+  if (!s) return '-';
+  return {
+    answered_confirmed: 'Answered — confirmed',
+    answered_uncommitted: 'Answered — uncommitted',
+    answered_declined: 'Answered — declined',
+    voicemail: 'Voicemail / no answer',
+    bad_number: 'Bad number',
+    rescheduled: 'Rescheduled',
+    lost_after_no_show: "Lost — no-show, won't reschedule",
+    lost_after_decline: 'Lost — declined to reschedule',
+  }[s] ?? s;
+}

@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
   formatEventDateTime,
+  formatEventDate,
   formatMoney,
   labelExperienceLevel,
   labelResponsibilityLevel,
@@ -10,7 +11,8 @@ import {
   labelRelevance,
   labelCoachingInterest,
 } from '@/lib/format';
-import CallConsoleForm from './call-console-form';
+import CallConsoleForm, { type CallAttemptRow } from './call-console-form';
+import AssignToEvent from './assign-to-event';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,6 +38,7 @@ export default async function CallConsolePage({
       goals,
       experience_level,
       responsibility_level,
+      rescheduled_from_booking_id,
       signed_in_at,
       is_first_session,
       referral_source,
@@ -70,12 +73,80 @@ export default async function CallConsolePage({
   const event = Array.isArray(booking.event) ? booking.event[0] : booking.event;
   const payment = Array.isArray(booking.payments) ? booking.payments[0] : null;
 
-  // List of upcoming events so Abel can assign one if missing
-  const { data: events } = await supabase
+  // Upcoming events (exclude this booking's current event from reschedule list)
+  const { data: upcomingEventsRaw } = await supabase
     .from('events')
     .select('id, session_label, start_time, end_time')
-    .gte('end_time', new Date().toISOString())
+    .gt('end_time', new Date().toISOString())
     .order('start_time', { ascending: true });
+
+  const upcomingEvents = (upcomingEventsRaw ?? []).filter(
+    (e) => e.id !== booking.event_id
+  );
+
+  // Call history for this booking
+  const { data: callAttemptsRaw } = await supabase
+    .from('call_attempts')
+    .select(
+      `
+      *,
+      reschedule_to_booking:bookings!call_attempts_reschedule_to_booking_id_fkey (
+        id,
+        event:events ( session_label )
+      )
+    `
+    )
+    .eq('booking_id', booking.id)
+    .order('created_at', { ascending: false });
+
+  const callAttempts = (callAttemptsRaw ?? []) as unknown as CallAttemptRow[];
+
+  // Default attempt type: derived from event timing + history
+  function deriveDefaultAttemptType():
+    | 'initial'
+    | '24h_reminder'
+    | 'stale_followup'
+    | 'post_event' {
+    const now = Date.now();
+    const endTs = event?.end_time ? new Date(event.end_time).getTime() : null;
+    const startTs = event?.start_time ? new Date(event.start_time).getTime() : null;
+
+    if (endTs !== null && endTs < now) return 'post_event';
+
+    const hasInitial = callAttempts.some((a) => a.attempt_type === 'initial');
+    const within24h =
+      startTs !== null && startTs - now <= 24 * 60 * 60 * 1000 && startTs > now;
+    if (within24h && hasInitial) return '24h_reminder';
+
+    if (callAttempts.length > 0) {
+      const latestTs = new Date(callAttempts[0].created_at).getTime();
+      const tenDaysMs = 10 * 24 * 60 * 60 * 1000;
+      if (now - latestTs > tenDaysMs) return 'stale_followup';
+    }
+
+    return 'initial';
+  }
+  const defaultAttemptType = deriveDefaultAttemptType();
+
+  // If this booking was rescheduled from another, fetch the original for the banner
+  let rescheduledFrom:
+    | { id: string; session_label: string | null; start_time: string | null }
+    | null = null;
+  if (booking.rescheduled_from_booking_id) {
+    const { data: original } = await supabase
+      .from('bookings')
+      .select('id, event:events ( session_label, start_time )')
+      .eq('id', booking.rescheduled_from_booking_id)
+      .maybeSingle();
+    if (original) {
+      const origEvent = Array.isArray(original.event) ? original.event[0] : original.event;
+      rescheduledFrom = {
+        id: original.id,
+        session_label: origEvent?.session_label ?? null,
+        start_time: origEvent?.start_time ?? null,
+      };
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -91,6 +162,32 @@ export default async function CallConsolePage({
         </h1>
         <p className="text-sm text-neutral-600 mt-1">{attendee.email}</p>
       </div>
+
+      {rescheduledFrom && (
+        <div className="border rounded-lg p-3 bg-amber-50 border-amber-200 text-sm text-amber-900">
+          ↺ This booking was rescheduled from{' '}
+          <Link
+            href={`/admin/bookings/${rescheduledFrom.id}`}
+            className="font-medium underline hover:text-amber-700"
+          >
+            {rescheduledFrom.session_label ?? 'an earlier session'}
+            {rescheduledFrom.start_time
+              ? ` on ${formatEventDate(rescheduledFrom.start_time)}`
+              : ''}
+          </Link>
+          .
+        </div>
+      )}
+
+      {!booking.event_id && (
+        <AssignToEvent
+          bookingId={booking.id}
+          upcomingEvents={upcomingEvents.map((e) => ({
+            id: e.id,
+            label: formatEventDateTime(e.start_time, e.end_time),
+          }))}
+        />
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="md:col-span-1 space-y-4">
@@ -197,16 +294,16 @@ export default async function CallConsolePage({
         <div className="md:col-span-2">
           <CallConsoleForm
             bookingId={booking.id}
-            initial={{
-              event_id: booking.event_id,
-              confirmation_status: booking.confirmation_status,
+            initialDetails={{
               goals: booking.goals ?? '',
               experience_level: booking.experience_level ?? '',
               responsibility_level: booking.responsibility_level ?? '',
               venue_override: booking.venue_override ?? '',
               pre_event_notes: booking.pre_event_notes ?? '',
             }}
-            events={(events ?? []).map((e) => ({
+            defaultAttemptType={defaultAttemptType}
+            callAttempts={callAttempts}
+            upcomingEvents={upcomingEvents.map((e) => ({
               id: e.id,
               label: formatEventDateTime(e.start_time, e.end_time),
             }))}
