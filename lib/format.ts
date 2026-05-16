@@ -54,3 +54,24 @@ export function colourAttendanceStatus(s: string): string {
     excused: 'bg-blue-100 text-blue-800',
   }[s] ?? 'bg-neutral-100 text-neutral-700';
 }
+
+export function labelExperienceLevel(s: string | null): string {
+  if (!s) return '-';
+  return {
+    under_1: 'Less than 1 year',
+    '1_to_3': '1 to 3 years',
+    '3_to_5': '3 to 5 years',
+    '5_plus': '5+ years',
+    other: 'Other',
+  }[s] ?? s;
+}
+
+export function labelResponsibilityLevel(s: string | null): string {
+  if (!s) return '-';
+  return {
+    influence_strategy: 'Influences leadership/strategy',
+    manage_teams: 'Manages teams + external rep',
+    aspiring_leader: 'Aspiring to leadership',
+    other: 'Other',
+  }[s] ?? s;
+}

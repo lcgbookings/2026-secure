@@ -181,6 +181,47 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Also consume any pending Typeform pre-event response for this email
+    if (!existingBooking) {
+      const { data: pendingTypeform } = await supabase
+        .from('pending_typeform_responses')
+        .select('id, goals, experience_level, responsibility_level')
+        .eq('email', normalised.attendee.email)
+        .is('consumed_at', null)
+        .gt('expires_at', new Date().toISOString())
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (pendingTypeform) {
+        const enrichments: Record<string, unknown> = {};
+        if (pendingTypeform.goals) enrichments.goals = pendingTypeform.goals;
+        if (pendingTypeform.experience_level)
+          enrichments.experience_level = pendingTypeform.experience_level;
+        if (pendingTypeform.responsibility_level)
+          enrichments.responsibility_level = pendingTypeform.responsibility_level;
+
+        if (Object.keys(enrichments).length > 0) {
+          await supabase
+            .from('bookings')
+            .update(enrichments)
+            .eq('id', bookingId);
+        }
+
+        await supabase
+          .from('pending_typeform_responses')
+          .update({
+            consumed_at: new Date().toISOString(),
+            consumed_by_booking_id: bookingId,
+          })
+          .eq('id', pendingTypeform.id);
+
+        console.log(
+          `[systeme webhook] Enriched booking ${bookingId} from pending Typeform`
+        );
+      }
+    }
+
     // 7. Check if payment already exists (idempotency)
     const { data: existingPayment } = await supabase
       .from('payments')

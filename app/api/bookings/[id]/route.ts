@@ -9,6 +9,8 @@ interface PatchBody {
   event_id?: string | null;
   confirmation_status?: 'pending' | 'confirmed' | 'cancelled' | 'unreachable';
   goals?: string;
+  experience_level?: string | null;
+  responsibility_level?: string | null;
   venue_override?: string;
   pre_event_notes?: string;
 }
@@ -47,6 +49,12 @@ export async function PATCH(
   const updates: Record<string, unknown> = {};
   if (body.event_id !== undefined) updates.event_id = body.event_id;
   if (body.goals !== undefined) updates.goals = body.goals;
+  if (body.experience_level !== undefined) {
+    updates.experience_level = body.experience_level || null;
+  }
+  if (body.responsibility_level !== undefined) {
+    updates.responsibility_level = body.responsibility_level || null;
+  }
   if (body.venue_override !== undefined) updates.venue_override = body.venue_override;
   if (body.pre_event_notes !== undefined)
     updates.pre_event_notes = body.pre_event_notes;

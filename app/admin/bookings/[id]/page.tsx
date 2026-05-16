@@ -1,7 +1,12 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { formatEventDateTime, formatMoney } from '@/lib/format';
+import {
+  formatEventDateTime,
+  formatMoney,
+  labelExperienceLevel,
+  labelResponsibilityLevel,
+} from '@/lib/format';
 import CallConsoleForm from './call-console-form';
 
 export const dynamic = 'force-dynamic';
@@ -26,6 +31,8 @@ export default async function CallConsolePage({
       confirmation_called_at,
       attendance_status,
       goals,
+      experience_level,
+      responsibility_level,
       venue_override,
       pre_event_notes,
       event_id,
@@ -73,6 +80,26 @@ export default async function CallConsolePage({
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="md:col-span-1 space-y-4">
+          <div className="border rounded-lg p-4 space-y-3 bg-blue-50/30">
+            <h2 className="text-xs uppercase text-neutral-500">Pre-event context</h2>
+            {(booking.goals || booking.experience_level || booking.responsibility_level) ? (
+              <>
+                {booking.goals && (
+                  <div>
+                    <p className="text-xs text-neutral-500">Why this is a priority</p>
+                    <p className="text-sm mt-0.5">{booking.goals}</p>
+                  </div>
+                )}
+                <Field label="Experience" value={labelExperienceLevel(booking.experience_level)} />
+                <Field label="Responsibility" value={labelResponsibilityLevel(booking.responsibility_level)} />
+              </>
+            ) : (
+              <p className="text-sm text-neutral-500 italic">
+                Not yet completed the pre-event survey.
+              </p>
+            )}
+          </div>
+
           <div className="border rounded-lg p-4 space-y-3">
             <h2 className="text-xs uppercase text-neutral-500">Attendee</h2>
             <Field label="Name" value={`${attendee.first_name} ${attendee.last_name}`} />
@@ -109,6 +136,8 @@ export default async function CallConsolePage({
               event_id: booking.event_id,
               confirmation_status: booking.confirmation_status,
               goals: booking.goals ?? '',
+              experience_level: booking.experience_level ?? '',
+              responsibility_level: booking.responsibility_level ?? '',
               venue_override: booking.venue_override ?? '',
               pre_event_notes: booking.pre_event_notes ?? '',
             }}

@@ -9,6 +9,8 @@ interface Props {
     event_id: string | null;
     confirmation_status: string;
     goals: string;
+    experience_level: string;
+    responsibility_level: string;
     venue_override: string;
     pre_event_notes: string;
   };
@@ -90,6 +92,38 @@ export default function CallConsoleForm({ bookingId, initial, events }: Props) {
               {opt.label}
             </button>
           ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium mb-1">Experience</label>
+          <select
+            value={form.experience_level}
+            onChange={(e) => setForm({ ...form, experience_level: e.target.value })}
+            className="w-full px-3 py-2 border rounded-md text-sm bg-white"
+          >
+            <option value="">Not captured</option>
+            <option value="under_1">Less than 1 year</option>
+            <option value="1_to_3">1 to 3 years</option>
+            <option value="3_to_5">3 to 5 years</option>
+            <option value="5_plus">5+ years</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">Responsibility</label>
+          <select
+            value={form.responsibility_level}
+            onChange={(e) => setForm({ ...form, responsibility_level: e.target.value })}
+            className="w-full px-3 py-2 border rounded-md text-sm bg-white"
+          >
+            <option value="">Not captured</option>
+            <option value="influence_strategy">Influences leadership/strategy</option>
+            <option value="manage_teams">Manages teams + external rep</option>
+            <option value="aspiring_leader">Aspiring to leadership</option>
+            <option value="other">Other</option>
+          </select>
         </div>
       </div>
 
