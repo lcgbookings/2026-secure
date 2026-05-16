@@ -38,6 +38,10 @@ export interface NormalisedTypeformResponse {
   goals: string | null;
   experience_level: string | null;
   responsibility_level: string | null;
+  pre_event_masterclass_choice: string | null;
+  referral_source: string | null;
+  newsletter_consent: boolean | null;
   form_id: string;
   response_token: string;
+  submitted_at: string;
 }

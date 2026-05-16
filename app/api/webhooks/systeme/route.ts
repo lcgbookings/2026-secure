@@ -181,11 +181,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Also consume any pending Typeform pre-event response for this email
+    // Also consume any pending Typeform pre-event response for this email.
+    // Requires these columns on pending_typeform_responses (run manually in Supabase):
+    //   alter table pending_typeform_responses
+    //     add column if not exists pre_event_masterclass_choice text,
+    //     add column if not exists referral_source text,
+    //     add column if not exists newsletter_consent boolean;
     if (!existingBooking) {
       const { data: pendingTypeform } = await supabase
         .from('pending_typeform_responses')
-        .select('id, goals, experience_level, responsibility_level')
+        .select('id, goals, experience_level, responsibility_level, pre_event_masterclass_choice, referral_source, newsletter_consent, created_at')
         .eq('email', normalised.attendee.email)
         .is('consumed_at', null)
         .gt('expires_at', new Date().toISOString())
@@ -200,6 +205,14 @@ export async function POST(req: NextRequest) {
           enrichments.experience_level = pendingTypeform.experience_level;
         if (pendingTypeform.responsibility_level)
           enrichments.responsibility_level = pendingTypeform.responsibility_level;
+        if (pendingTypeform.pre_event_masterclass_choice)
+          enrichments.pre_event_masterclass_choice = pendingTypeform.pre_event_masterclass_choice;
+        if (pendingTypeform.referral_source)
+          enrichments.referral_source = pendingTypeform.referral_source;
+        if (pendingTypeform.newsletter_consent !== null && pendingTypeform.newsletter_consent !== undefined) {
+          enrichments.newsletter_consent = pendingTypeform.newsletter_consent;
+          enrichments.newsletter_consent_at = pendingTypeform.created_at;
+        }
 
         if (Object.keys(enrichments).length > 0) {
           await supabase

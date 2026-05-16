@@ -4,9 +4,10 @@ import { normalisePreEventPayload } from './normalise-pre-event';
 import { normaliseSigninPayload } from './normalise-signin';
 import { normalisePostSessionPayload } from './normalise-post-session';
 
-const FORM_PRE_EVENT = 'DCTXrUnR';
-const FORM_SIGNIN = 'F7YiyrxX';
-const FORM_POST_SESSION = 'fsOr4L5O';
+const FORM_PRE_EVENT = 'u9Xgavse';
+const FORM_PRE_EVENT_LEGACY = 'DCTXrUnR';
+const FORM_SIGNIN = 'q1H28ZpT';
+const FORM_POST_SESSION = 'taq9E9Mt';
 
 export type RouteResult =
   | { status: 'enriched'; bookingId: string; formType: string }
@@ -19,7 +20,7 @@ export async function routeAndProcess(
 ): Promise<RouteResult> {
   const formId = payload.form_response?.form_id ?? '';
 
-  if (formId === FORM_PRE_EVENT) {
+  if (formId === FORM_PRE_EVENT || formId === FORM_PRE_EVENT_LEGACY) {
     return processPreEvent(payload, rawPayload);
   } else if (formId === FORM_SIGNIN) {
     return processSignin(payload, rawPayload);
@@ -42,7 +43,7 @@ async function findLatestBookingForEmail(email: string) {
 
   const { data: booking } = await supabase
     .from('bookings')
-    .select('id, goals, experience_level, responsibility_level, signed_in_at, post_session_submitted_at, attendance_status')
+    .select('id, goals, experience_level, responsibility_level, pre_event_masterclass_choice, referral_source, newsletter_consent, signed_in_at, post_session_submitted_at, attendance_status')
     .eq('attendee_id', attendee.id)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -71,6 +72,14 @@ async function processPreEvent(
       updates.experience_level = normalised.experience_level;
     if (normalised.responsibility_level && !booking.responsibility_level)
       updates.responsibility_level = normalised.responsibility_level;
+    if (normalised.pre_event_masterclass_choice && !booking.pre_event_masterclass_choice)
+      updates.pre_event_masterclass_choice = normalised.pre_event_masterclass_choice;
+    if (normalised.referral_source && !booking.referral_source)
+      updates.referral_source = normalised.referral_source;
+    if (normalised.newsletter_consent !== null && booking.newsletter_consent === null) {
+      updates.newsletter_consent = normalised.newsletter_consent;
+      updates.newsletter_consent_at = normalised.submitted_at;
+    }
 
     if (Object.keys(updates).length > 0) {
       await supabase.from('bookings').update(updates).eq('id', booking.id);
@@ -90,6 +99,9 @@ async function processPreEvent(
         goals: normalised.goals,
         experience_level: normalised.experience_level,
         responsibility_level: normalised.responsibility_level,
+        pre_event_masterclass_choice: normalised.pre_event_masterclass_choice,
+        referral_source: normalised.referral_source,
+        newsletter_consent: normalised.newsletter_consent,
         raw_payload: rawPayload as Record<string, unknown>,
         expires_at: expiresAt,
       },

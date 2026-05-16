@@ -27,6 +27,27 @@ const RESPONSIBILITY_LABEL_MAP: Record<string, string> = {
   'aspiring to leadership': 'aspiring_leader',
 };
 
+const REFERRAL_LABEL_MAP_PRE_EVENT: Record<string, string> = {
+  'instagram': 'instagram',
+  'word of mouth': 'word_of_mouth',
+  'eventbrite': 'eventbrite',
+  'tiktok': 'tiktok',
+  'organisation': 'organisation_employer',
+  'employer': 'organisation_employer',
+  'search': 'search',
+  'google': 'search',
+  'linkedin': 'linkedin',
+};
+
+function slugifyReferralSource(label: string | undefined): string | null {
+  if (!label) return null;
+  const normalised = label.toLowerCase().trim();
+  for (const [key, value] of Object.entries(REFERRAL_LABEL_MAP_PRE_EVENT)) {
+    if (normalised.includes(key)) return value;
+  }
+  return 'other';
+}
+
 function slugifyExperience(label: string | undefined): string | null {
   if (!label) return null;
   const normalised = label.toLowerCase().trim();
@@ -106,12 +127,35 @@ export function normalisePreEventPayload(
   const responsibilityLabel = (responsibilityAnswer as { choice?: { label?: string } } | null)?.choice?.label;
   const responsibility_level = slugifyResponsibility(responsibilityLabel);
 
+  // Masterclass choice: "Could you confirm which Masterclass you're joining?"
+  const masterclassAnswer = findAnswerByTitleKeyword(payload, ['confirm', 'masterclass', 'joining']) as
+    | { choice?: { label?: string } }
+    | null;
+  const pre_event_masterclass_choice = masterclassAnswer?.choice?.label ?? null;
+
+  // Referral source: "How did you hear about this Masterclass?"
+  const referralAnswer = findAnswerByTitleKeyword(payload, ['hear', 'masterclass']) as
+    | { choice?: { label?: string } }
+    | null;
+  const referral_source = slugifyReferralSource(referralAnswer?.choice?.label);
+
+  // Newsletter consent: "Would you like to subscribe to our weekly communication newsletter..."
+  const newsletterAnswer = findAnswerByTitleKeyword(payload, ['subscribe', 'newsletter']) as
+    | { boolean?: boolean }
+    | null;
+  const newsletter_consent =
+    typeof newsletterAnswer?.boolean === 'boolean' ? newsletterAnswer.boolean : null;
+
   return {
     email,
     goals,
     experience_level,
     responsibility_level,
+    pre_event_masterclass_choice,
+    referral_source,
+    newsletter_consent,
     form_id: formId,
     response_token: responseToken,
+    submitted_at: payload.form_response?.submitted_at ?? new Date().toISOString(),
   };
 }

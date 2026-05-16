@@ -89,6 +89,7 @@ export function labelReferralSource(s: string | null): string {
     tiktok: 'TikTok',
     organisation_employer: 'Organisation / Employer',
     search: 'Search (Google)',
+    linkedin: 'LinkedIn',
     other: 'Other',
   }[s] ?? s;
 }
