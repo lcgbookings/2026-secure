@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { normaliseSystemeBooking } from '@/lib/webhooks/systeme/normalise';
 import type { SystemeBookingPayload } from '@/lib/webhooks/systeme/types';
+import { parseRadioLabel } from '@/lib/radio-parser';
 
 // Disable static analysis; this route uses runtime headers and DB writes.
 export const dynamic = 'force-dynamic';
@@ -160,14 +161,76 @@ export async function POST(req: NextRequest) {
           })
           .eq('id', pending.id);
 
-        // If the pending row had a matched event, link it to the booking.
-        if (pending.matched_event_id) {
+        let eventId: string | null = pending.matched_event_id;
+
+        // Auto-create event from radio label if possible
+        if (!eventId && pending.masterclass_date_label) {
+          const parsed = parseRadioLabel(pending.masterclass_date_label);
+
+          if (parsed) {
+            // Race guard: re-check for an event with this session_label
+            const { data: existingRace } = await supabase
+              .from('events')
+              .select('id')
+              .eq('session_label', pending.masterclass_date_label)
+              .maybeSingle();
+
+            if (existingRace) {
+              eventId = existingRace.id;
+            } else {
+              const sessionDate = `${parsed.parsed_year}-${String(parsed.parsed_month).padStart(2, '0')}-${String(parsed.parsed_day).padStart(2, '0')}`;
+
+              const { data: newEvent, error: insertErr } = await supabase
+                .from('events')
+                .insert({
+                  session_label: pending.masterclass_date_label,
+                  session_date: sessionDate,
+                  start_time: parsed.start_time,
+                  end_time: parsed.end_time,
+                  auto_created: true,
+                })
+                .select('id')
+                .single();
+
+              if (insertErr) {
+                // Likely a race; re-query by label
+                const { data: afterRace } = await supabase
+                  .from('events')
+                  .select('id')
+                  .eq('session_label', pending.masterclass_date_label)
+                  .maybeSingle();
+                eventId = afterRace?.id ?? null;
+                if (!eventId) {
+                  console.error(
+                    `[systeme webhook] Event auto-create failed for "${pending.masterclass_date_label}"`,
+                    insertErr
+                  );
+                }
+              } else {
+                eventId = newEvent.id;
+                console.log(
+                  `[systeme webhook] Auto-created event ${eventId} from label "${pending.masterclass_date_label}"`
+                );
+
+                // Retroactively link any other queued radio clicks for the same label
+                await supabase
+                  .from('pending_event_selections')
+                  .update({ matched_event_id: eventId })
+                  .eq('masterclass_date_label', pending.masterclass_date_label)
+                  .is('matched_event_id', null);
+              }
+            }
+          }
+        }
+
+        // Link the resolved event to the booking
+        if (eventId) {
           await supabase
             .from('bookings')
-            .update({ event_id: pending.matched_event_id })
+            .update({ event_id: eventId })
             .eq('id', bookingId);
           console.log(
-            `[systeme webhook] Linked booking ${bookingId} to event ${pending.matched_event_id} via pending selection`
+            `[systeme webhook] Linked booking ${bookingId} to event ${eventId} via pending selection`
           );
         } else {
           console.log(

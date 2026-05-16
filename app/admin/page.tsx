@@ -33,6 +33,14 @@ export default async function AdminHome() {
     .in('event_id', eventIds.length ? eventIds : ['00000000-0000-0000-0000-000000000000'])
     .order('created_at', { ascending: true });
 
+  const { data: autoCreatedNeedingReview } = await supabase
+    .from('events')
+    .select('id, session_label, start_time')
+    .eq('auto_created', true)
+    .is('calendar_url', null)
+    .gte('end_time', new Date().toISOString())
+    .order('start_time', { ascending: true });
+
   // Get total pending calls across all upcoming events
   const totalPending = (bookings ?? []).filter(
     (b) => b.confirmation_status === 'pending'
@@ -105,6 +113,33 @@ export default async function AdminHome() {
           </div>
         )}
       </div>
+
+      {(autoCreatedNeedingReview?.length ?? 0) > 0 && (
+        <div>
+          <h2 className="text-sm font-semibold uppercase text-neutral-500 mb-3">
+            Auto-created events needing review ({autoCreatedNeedingReview?.length ?? 0})
+          </h2>
+          <div className="border rounded-lg divide-y">
+            {(autoCreatedNeedingReview ?? []).map((ev) => (
+              <Link
+                key={ev.id}
+                href={`/admin/events/${ev.id}`}
+                className="flex items-center justify-between gap-4 p-3 hover:bg-neutral-50 transition"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-sm">{ev.session_label}</p>
+                  <p className="text-xs text-neutral-500">
+                    {formatEventDate(ev.start_time)}
+                  </p>
+                </div>
+                <div className="text-right text-xs text-neutral-600 whitespace-nowrap">
+                  <p className="text-neutral-400">Set up</p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <h2 className="text-sm font-semibold uppercase text-neutral-500 mb-3">
