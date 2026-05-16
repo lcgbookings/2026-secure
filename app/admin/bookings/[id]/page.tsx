@@ -10,6 +10,8 @@ import {
   labelReferralSource,
   labelRelevance,
   labelCoachingInterest,
+  labelProgrammeStatus,
+  formatRelativeTime,
 } from '@/lib/format';
 import CallConsoleForm, { type CallAttemptRow } from './call-console-form';
 import AssignToEvent from './assign-to-event';
@@ -39,6 +41,9 @@ export default async function CallConsolePage({
       experience_level,
       responsibility_level,
       rescheduled_from_booking_id,
+      programme_signup_status,
+      programme_signup_at,
+      next_follow_up_at,
       signed_in_at,
       is_first_session,
       referral_source,
@@ -161,6 +166,16 @@ export default async function CallConsolePage({
           {attendee.first_name} {attendee.last_name}
         </h1>
         <p className="text-sm text-neutral-600 mt-1">{attendee.email}</p>
+        <ProgrammePill
+          status={booking.programme_signup_status}
+          signedUpAt={booking.programme_signup_at}
+          eventEndIso={event?.end_time ?? null}
+        />
+        {booking.next_follow_up_at && (
+          <p className="text-sm text-neutral-600 mt-2">
+            ↻ Follow up due {formatRelativeTime(booking.next_follow_up_at)}
+          </p>
+        )}
       </div>
 
       {rescheduledFrom && (
@@ -328,5 +343,48 @@ function Field({
       <p className="text-xs text-neutral-500">{label}</p>
       <p className={`text-sm ${mono ? 'font-mono' : ''} mt-0.5`}>{value}</p>
     </div>
+  );
+}
+
+function ProgrammePill({
+  status,
+  signedUpAt,
+  eventEndIso,
+}: {
+  status: string | null;
+  signedUpAt: string | null;
+  eventEndIso: string | null;
+}) {
+  const eventHasPassed =
+    eventEndIso !== null && new Date(eventEndIso).getTime() < Date.now();
+
+  // Skip entirely if the event is still upcoming and nothing's been decided
+  if (!status && !eventHasPassed) return null;
+
+  if (status === 'signed_up') {
+    const date = signedUpAt
+      ? new Date(signedUpAt).toLocaleDateString('en-GB', { dateStyle: 'short' })
+      : null;
+    return (
+      <span className="inline-block mt-2 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+        Programme: {labelProgrammeStatus(status)}
+        {date ? ` · ${date}` : ''}
+      </span>
+    );
+  }
+
+  if (status === 'declined') {
+    return (
+      <span className="inline-block mt-2 px-2 py-0.5 rounded-full text-xs font-medium bg-neutral-200 text-neutral-700">
+        Programme: {labelProgrammeStatus(status)}
+      </span>
+    );
+  }
+
+  // status null + event has passed → "To be decided"
+  return (
+    <span className="inline-block mt-2 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+      Programme: To be decided
+    </span>
   );
 }

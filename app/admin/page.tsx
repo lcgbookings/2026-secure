@@ -204,6 +204,21 @@ export default async function AdminHome() {
       return aT - bT; // most stale first (oldest latest-attempt)
     });
 
+  // ---------- QUEUE: Follow-ups due ----------
+  const { data: followUpsDueRaw } = await supabase
+    .from('bookings')
+    .select(
+      `id,
+       next_follow_up_at,
+       attendee:attendees!inner (first_name, last_name, email, phone),
+       event:events!inner (id, session_label, start_time)`
+    )
+    .not('next_follow_up_at', 'is', null)
+    .lte('next_follow_up_at', nowIso)
+    .order('next_follow_up_at', { ascending: true });
+
+  const followUpsDue = (followUpsDueRaw ?? []) as unknown as BookingRow[];
+
   // ---------- QUEUE 5: calendar invites to update ----------
   const { data: invitesToUpdateRaw } = await supabase
     .from('bookings')
@@ -256,6 +271,7 @@ export default async function AdminHome() {
       />
       <QueueSection title="New bookings to call" rows={newToCall} tail="Tap to call" />
       <QueueSection title="Stale follow-ups" rows={staleFollowups} tail="Tap to call" />
+      <QueueSection title="Follow-ups due" rows={followUpsDue} tail="Call now" />
       <QueueSection
         title="Calendar invites to update"
         rows={invitesToUpdate}

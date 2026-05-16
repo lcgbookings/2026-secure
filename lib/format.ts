@@ -136,5 +136,16 @@ export function labelOutcome(s: string | null): string {
     rescheduled: 'Rescheduled',
     lost_after_no_show: "Lost — no-show, won't reschedule",
     lost_after_decline: 'Lost — declined to reschedule',
+    signed_up_for_programme: 'Signed up for programme',
+    programme_declined: 'Declined programme',
+    follow_up_requested: 'Follow-up requested',
+  }[s] ?? s;
+}
+
+export function labelProgrammeStatus(s: string | null): string {
+  if (!s) return 'Not yet decided';
+  return {
+    signed_up: 'Signed up',
+    declined: 'Declined',
   }[s] ?? s;
 }

@@ -15,8 +15,16 @@ const OUTCOMES = [
   'rescheduled',
   'lost_after_no_show',
   'lost_after_decline',
+  'signed_up_for_programme',
+  'programme_declined',
+  'follow_up_requested',
 ] as const;
-const POST_EVENT_ONLY_OUTCOMES = ['lost_after_no_show', 'lost_after_decline'] as const;
+const POST_EVENT_ONLY_OUTCOMES = [
+  'lost_after_no_show',
+  'lost_after_decline',
+  'signed_up_for_programme',
+  'programme_declined',
+] as const;
 
 interface PostBody {
   attempt_type?: string;
@@ -24,6 +32,7 @@ interface PostBody {
   notes?: string;
   whatsapp_video_sent?: boolean;
   reschedule_to_event_id?: string;
+  follow_up_at?: string;
 }
 
 const CONFIRMATION_MAP: Record<string, string> = {
@@ -64,7 +73,14 @@ export async function POST(
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const { attempt_type, outcome, notes, whatsapp_video_sent, reschedule_to_event_id } = body;
+  const {
+    attempt_type,
+    outcome,
+    notes,
+    whatsapp_video_sent,
+    reschedule_to_event_id,
+    follow_up_at,
+  } = body;
 
   if (!attempt_type || !(ATTEMPT_TYPES as readonly string[]).includes(attempt_type)) {
     return NextResponse.json({ error: 'Invalid attempt_type' }, { status: 400 });
@@ -77,7 +93,7 @@ export async function POST(
     (POST_EVENT_ONLY_OUTCOMES as readonly string[]).includes(outcome)
   ) {
     return NextResponse.json(
-      { error: 'lost_after_* outcomes only valid for post_event attempts' },
+      { error: 'This outcome is only valid for post_event attempts' },
       { status: 400 }
     );
   }
@@ -90,6 +106,26 @@ export async function POST(
   if (outcome !== 'rescheduled' && reschedule_to_event_id) {
     return NextResponse.json(
       { error: 'reschedule_to_event_id only allowed when outcome is rescheduled' },
+      { status: 400 }
+    );
+  }
+  // follow_up_at gating
+  let followUpIso: string | null = null;
+  if (outcome === 'follow_up_requested') {
+    if (!follow_up_at) {
+      return NextResponse.json(
+        { error: 'follow_up_at required when outcome is follow_up_requested' },
+        { status: 400 }
+      );
+    }
+    const parsed = new Date(follow_up_at);
+    if (Number.isNaN(parsed.getTime())) {
+      return NextResponse.json({ error: 'Invalid follow_up_at date' }, { status: 400 });
+    }
+    followUpIso = parsed.toISOString();
+  } else if (follow_up_at) {
+    return NextResponse.json(
+      { error: 'follow_up_at only allowed when outcome is follow_up_requested' },
       { status: 400 }
     );
   }
@@ -196,18 +232,38 @@ export async function POST(
       .from('bookings')
       .update({ no_show_lost_at: new Date().toISOString() })
       .eq('id', origBooking.id);
+  } else if (outcome === 'signed_up_for_programme') {
+    await admin
+      .from('bookings')
+      .update({
+        programme_signup_status: 'signed_up',
+        programme_signup_at: new Date().toISOString(),
+        next_follow_up_at: null,
+      })
+      .eq('id', origBooking.id);
+  } else if (outcome === 'programme_declined') {
+    await admin
+      .from('bookings')
+      .update({
+        programme_signup_status: 'declined',
+        programme_signup_at: new Date().toISOString(),
+        next_follow_up_at: null,
+      })
+      .eq('id', origBooking.id);
+  } else if (outcome === 'follow_up_requested') {
+    await admin
+      .from('bookings')
+      .update({ next_follow_up_at: followUpIso })
+      .eq('id', origBooking.id);
   } else if (outcome !== 'rescheduled') {
     const newConfirmation = CONFIRMATION_MAP[outcome];
+    const update: Record<string, unknown> = { next_follow_up_at: null };
     if (newConfirmation) {
-      await admin
-        .from('bookings')
-        .update({
-          confirmation_status: newConfirmation,
-          confirmation_called_at: new Date().toISOString(),
-          confirmation_called_by: adminRow.id,
-        })
-        .eq('id', origBooking.id);
+      update.confirmation_status = newConfirmation;
+      update.confirmation_called_at = new Date().toISOString();
+      update.confirmation_called_by = adminRow.id;
     }
+    await admin.from('bookings').update(update).eq('id', origBooking.id);
   }
 
   return NextResponse.json({

@@ -14,7 +14,17 @@ type Outcome =
   | 'bad_number'
   | 'rescheduled'
   | 'lost_after_no_show'
-  | 'lost_after_decline';
+  | 'lost_after_decline'
+  | 'signed_up_for_programme'
+  | 'programme_declined'
+  | 'follow_up_requested';
+
+const POST_EVENT_ONLY: ReadonlySet<Outcome> = new Set<Outcome>([
+  'lost_after_no_show',
+  'lost_after_decline',
+  'signed_up_for_programme',
+  'programme_declined',
+]);
 
 const BASE_OUTCOMES: Array<{ value: Outcome; label: string }> = [
   { value: 'answered_confirmed', label: 'Answered — confirmed' },
@@ -23,12 +33,21 @@ const BASE_OUTCOMES: Array<{ value: Outcome; label: string }> = [
   { value: 'voicemail', label: 'Voicemail / no answer' },
   { value: 'bad_number', label: 'Bad number' },
   { value: 'rescheduled', label: 'Rescheduled to another session' },
+  { value: 'follow_up_requested', label: 'Follow-up requested' },
 ];
 
 const POST_EVENT_OUTCOMES: Array<{ value: Outcome; label: string }> = [
   { value: 'lost_after_no_show', label: "Lost — no-show, won't reschedule" },
   { value: 'lost_after_decline', label: 'Lost — declined to reschedule' },
+  { value: 'signed_up_for_programme', label: 'Signed up for programme' },
+  { value: 'programme_declined', label: 'Declined programme' },
 ];
+
+function oneWeekFromTodayIso(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 7);
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD for <input type="date">
+}
 
 export interface CallAttemptRow {
   id: string;
@@ -99,6 +118,7 @@ export default function CallConsoleForm({
   const [attemptNotes, setAttemptNotes] = useState('');
   const [whatsappSent, setWhatsappSent] = useState(false);
   const [rescheduleToEventId, setRescheduleToEventId] = useState('');
+  const [followUpDate, setFollowUpDate] = useState(oneWeekFromTodayIso());
   const [attemptStatus, setAttemptStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [attemptError, setAttemptError] = useState('');
 
@@ -117,6 +137,10 @@ export default function CallConsoleForm({
       setAttemptError('Pick a session to reschedule to.');
       return;
     }
+    if (outcome === 'follow_up_requested' && !followUpDate) {
+      setAttemptError('Pick a follow-up date.');
+      return;
+    }
 
     setAttemptStatus('saving');
     const payload: Record<string, unknown> = {
@@ -127,6 +151,9 @@ export default function CallConsoleForm({
     };
     if (outcome === 'rescheduled') {
       payload.reschedule_to_event_id = rescheduleToEventId;
+    }
+    if (outcome === 'follow_up_requested') {
+      payload.follow_up_at = new Date(followUpDate).toISOString();
     }
 
     const res = await fetch(`/api/bookings/${bookingId}/call-attempts`, {
@@ -142,6 +169,7 @@ export default function CallConsoleForm({
       setAttemptNotes('');
       setWhatsappSent(false);
       setRescheduleToEventId('');
+      setFollowUpDate(oneWeekFromTodayIso());
       router.refresh();
       setTimeout(() => setAttemptStatus('idle'), 2000);
       // If rescheduled, send the user to the new booking
@@ -262,10 +290,7 @@ export default function CallConsoleForm({
                 const next = e.target.value as AttemptType;
                 setAttemptType(next);
                 // If switching away from post_event and a post-only outcome is selected, clear it
-                if (
-                  next !== 'post_event' &&
-                  (outcome === 'lost_after_no_show' || outcome === 'lost_after_decline')
-                ) {
+                if (next !== 'post_event' && outcome && POST_EVENT_ONLY.has(outcome)) {
                   setOutcome('');
                 }
               }}
@@ -286,6 +311,9 @@ export default function CallConsoleForm({
                 const next = e.target.value as Outcome | '';
                 setOutcome(next);
                 if (next !== 'rescheduled') setRescheduleToEventId('');
+                if (next === 'follow_up_requested' && !followUpDate) {
+                  setFollowUpDate(oneWeekFromTodayIso());
+                }
               }}
               className="w-full px-3 py-2 border rounded-md text-sm bg-white"
             >
@@ -314,6 +342,18 @@ export default function CallConsoleForm({
                 </option>
               ))}
             </select>
+          </div>
+        )}
+
+        {outcome === 'follow_up_requested' && (
+          <div>
+            <label className="block text-sm font-medium mb-1">Follow up on</label>
+            <input
+              type="date"
+              value={followUpDate}
+              onChange={(e) => setFollowUpDate(e.target.value)}
+              className="px-3 py-2 border rounded-md text-sm bg-white"
+            />
           </div>
         )}
 
