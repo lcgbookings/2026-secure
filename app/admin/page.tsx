@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { formatEventDateTime } from '@/lib/format';
+import { formatEventDateTime, formatEventDate } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +20,18 @@ export default async function AdminHome() {
     .from('bookings')
     .select('event_id, confirmation_status')
     .in('event_id', eventIds.length ? eventIds : ['00000000-0000-0000-0000-000000000000']);
+
+  const { data: pendingCallBookings } = await supabase
+    .from('bookings')
+    .select(`
+      id,
+      confirmation_status,
+      attendee:attendees!inner (id, first_name, last_name, email, phone),
+      event:events!inner (id, session_label, start_time)
+    `)
+    .eq('confirmation_status', 'pending')
+    .in('event_id', eventIds.length ? eventIds : ['00000000-0000-0000-0000-000000000000'])
+    .order('created_at', { ascending: true });
 
   // Get total pending calls across all upcoming events
   const totalPending = (bookings ?? []).filter(
@@ -52,6 +64,46 @@ export default async function AdminHome() {
         <StatTile label="Upcoming bookings" value={totalBookings} />
         <StatTile label="Confirmed" value={totalConfirmed} accent="green" />
         <StatTile label="Pending calls" value={totalPending} accent="amber" />
+      </div>
+
+      <div>
+        <h2 className="text-sm font-semibold uppercase text-neutral-500 mb-3">
+          Calls to make ({pendingCallBookings?.length ?? 0})
+        </h2>
+
+        {(pendingCallBookings?.length ?? 0) === 0 ? (
+          <div className="border rounded-lg p-6 text-center text-neutral-500 text-sm">
+            No pending calls. All booked attendees confirmed.
+          </div>
+        ) : (
+          <div className="border rounded-lg divide-y">
+            {(pendingCallBookings ?? []).map((b) => {
+              const a = Array.isArray(b.attendee) ? b.attendee[0] : b.attendee;
+              const ev = Array.isArray(b.event) ? b.event[0] : b.event;
+              if (!a || !ev) return null;
+              return (
+                <Link
+                  key={b.id}
+                  href={`/admin/bookings/${b.id}`}
+                  className="flex items-center justify-between gap-4 p-3 hover:bg-neutral-50 transition"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm">
+                      {a.first_name} {a.last_name}
+                    </p>
+                    <p className="text-xs text-neutral-500 truncate">
+                      {a.email} · {a.phone ?? 'no phone'}
+                    </p>
+                  </div>
+                  <div className="text-right text-xs text-neutral-600 whitespace-nowrap">
+                    <p>{formatEventDate(ev.start_time)}</p>
+                    <p className="text-neutral-400">Tap to call</p>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div>

@@ -6,6 +6,9 @@ import {
   formatMoney,
   labelExperienceLevel,
   labelResponsibilityLevel,
+  labelReferralSource,
+  labelRelevance,
+  labelCoachingInterest,
 } from '@/lib/format';
 import CallConsoleForm from './call-console-form';
 
@@ -33,6 +36,17 @@ export default async function CallConsolePage({
       goals,
       experience_level,
       responsibility_level,
+      signed_in_at,
+      is_first_session,
+      referral_source,
+      referral_detail,
+      pre_session_confidence,
+      session_value_rating,
+      most_useful_insight,
+      session_relevance,
+      hardest_under_pressure,
+      coaching_interest,
+      post_session_submitted_at,
       venue_override,
       pre_event_notes,
       event_id,
@@ -97,6 +111,57 @@ export default async function CallConsolePage({
               <p className="text-sm text-neutral-500 italic">
                 Not yet completed the pre-event survey.
               </p>
+            )}
+          </div>
+
+          {/* Sign-in card */}
+          <div className="border rounded-lg p-4 space-y-3 bg-green-50/30">
+            <h2 className="text-xs uppercase text-neutral-500">Sign-in</h2>
+            {booking.signed_in_at ? (
+              <>
+                <Field label="Signed in" value={new Date(booking.signed_in_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })} />
+                {booking.is_first_session !== null && (
+                  <Field label="First session" value={booking.is_first_session ? 'Yes' : 'No (returning)'} />
+                )}
+                <Field label="Referral" value={labelReferralSource(booking.referral_source)} />
+                {booking.referral_detail && (
+                  <Field label="Detail" value={booking.referral_detail} />
+                )}
+                {typeof booking.pre_session_confidence === 'number' && (
+                  <Field label="Pre-session confidence" value={`${booking.pre_session_confidence}/10`} />
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-neutral-500 italic">Not yet signed in.</p>
+            )}
+          </div>
+
+          {/* Post-session card */}
+          <div className="border rounded-lg p-4 space-y-3 bg-purple-50/30">
+            <h2 className="text-xs uppercase text-neutral-500">Post-session reflection</h2>
+            {booking.post_session_submitted_at ? (
+              <>
+                <Field label="Submitted" value={new Date(booking.post_session_submitted_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })} />
+                {typeof booking.session_value_rating === 'number' && (
+                  <Field label="Value rating" value={`${booking.session_value_rating}/10`} />
+                )}
+                <Field label="Relevance" value={labelRelevance(booking.session_relevance)} />
+                <Field label="Coaching interest" value={labelCoachingInterest(booking.coaching_interest)} />
+                {booking.most_useful_insight && (
+                  <div>
+                    <p className="text-xs text-neutral-500">Most useful insight</p>
+                    <p className="text-sm mt-0.5">{booking.most_useful_insight}</p>
+                  </div>
+                )}
+                {booking.hardest_under_pressure && (
+                  <div>
+                    <p className="text-xs text-neutral-500">Hardest under pressure</p>
+                    <p className="text-sm mt-0.5">{booking.hardest_under_pressure}</p>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-neutral-500 italic">Not yet submitted reflection.</p>
             )}
           </div>
 

@@ -74,7 +74,7 @@ function findAnswerByTitleKeyword(
   return (matchedAnswer ?? null) as never;
 }
 
-export function normaliseTypeformPayload(
+export function normalisePreEventPayload(
   payload: TypeformWebhookPayload
 ): NormalisedTypeformResponse {
   const formId = payload.form_response?.form_id ?? '';

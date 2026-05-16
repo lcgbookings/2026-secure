@@ -15,6 +15,10 @@ export function formatEventDateTime(startIso: string, endIso: string): string {
   return `${datePart}, ${startTime} to ${endTime}`;
 }
 
+export function formatEventDate(startIso: string): string {
+  return formatInTimeZone(new Date(startIso), LONDON_TZ, 'EEE, MMM d');
+}
+
 export function formatRelativeTime(iso: string): string {
   return formatDistanceToNowStrict(new Date(iso), { addSuffix: true });
 }
@@ -72,6 +76,40 @@ export function labelResponsibilityLevel(s: string | null): string {
     influence_strategy: 'Influences leadership/strategy',
     manage_teams: 'Manages teams + external rep',
     aspiring_leader: 'Aspiring to leadership',
+    other: 'Other',
+  }[s] ?? s;
+}
+
+export function labelReferralSource(s: string | null): string {
+  if (!s) return '-';
+  return {
+    instagram: 'Instagram',
+    word_of_mouth: 'Word of mouth',
+    eventbrite: 'Eventbrite',
+    tiktok: 'TikTok',
+    organisation_employer: 'Organisation / Employer',
+    search: 'Search (Google)',
+    other: 'Other',
+  }[s] ?? s;
+}
+
+export function labelRelevance(s: string | null): string {
+  if (!s) return '-';
+  return {
+    very_relevant: 'Very relevant',
+    somewhat_relevant: 'Somewhat relevant',
+    interesting_not_priority: 'Interesting, not a priority',
+    not_relevant: 'Not relevant at this time',
+    other: 'Other',
+  }[s] ?? s;
+}
+
+export function labelCoachingInterest(s: string | null): string {
+  if (!s) return '-';
+  return {
+    speak_before_leaving: 'Wants to join at masterclass rate (hot)',
+    apply_via_website: 'Will apply via website later (warm)',
+    not_at_this_time: 'Not at this time',
     other: 'Other',
   }[s] ?? s;
 }
