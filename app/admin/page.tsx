@@ -38,12 +38,18 @@ export default async function AdminHome() {
   const nowIso = new Date().toISOString();
   const now = Date.now();
 
-  // ---------- upcoming events list (unchanged) ----------
+  // ---------- upcoming events list (drafts excluded) ----------
   const { data: events } = await supabase
     .from('events')
     .select('id, session_label, start_time, end_time, venue, capacity, status')
+    .eq('status', 'scheduled')
     .gte('end_time', nowIso)
     .order('start_time', { ascending: true });
+
+  const { count: draftCount } = await supabase
+    .from('events')
+    .select('*', { count: 'exact', head: true })
+    .eq('status', 'draft');
 
   const eventIds = (events ?? []).map((e) => e.id);
   const { data: bookings } = await supabase
@@ -258,6 +264,25 @@ export default async function AdminHome() {
         <StatTile label="Confirmed" value={totalConfirmed} accent="green" />
         <StatTile label="Pending calls" value={totalPending} accent="amber" />
       </div>
+
+      {draftCount && draftCount > 0 ? (
+        <div className="border border-yellow-200 bg-yellow-50 rounded-lg p-3 flex items-center justify-between">
+          <div className="text-sm">
+            <span className="font-semibold text-yellow-900">
+              {draftCount} draft event{draftCount === 1 ? '' : 's'}
+            </span>
+            <span className="text-yellow-800">
+              {' '}auto-created from radio clicks. Review to add venue and confirm details.
+            </span>
+          </div>
+          <Link
+            href="/admin/events?status=draft"
+            className="text-xs underline text-yellow-900 whitespace-nowrap ml-3"
+          >
+            Review →
+          </Link>
+        </div>
+      ) : null}
 
       <QueueSection
         title="Post-event no-show reschedule"

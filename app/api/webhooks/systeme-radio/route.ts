@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { findEventIdForLabel } from '@/lib/webhooks/event-matching';
+import { findEventIdForLabel, parseFullEventLabel } from '@/lib/webhooks/event-matching';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -50,13 +50,103 @@ export async function POST(req: NextRequest) {
   const email = payload.email.trim().toLowerCase();
   const label = payload.masterclass_date.trim();
 
-  // Resolve to event_id (best-effort; if no match, store anyway so we can debug)
-  const matchedEventId = await findEventIdForLabel(label);
+  const supabase = createAdminClient();
+
+  // Resolve to event_id (best-effort; if no match, try to auto-create a draft event from the label)
+  let matchedEventId = await findEventIdForLabel(label);
+
+  if (!matchedEventId) {
+    const parseResult = parseFullEventLabel(label);
+
+    if (parseResult.success) {
+      const { candidate } = parseResult;
+
+      const insertPayload = {
+        session_label: candidate.session_label,
+        session_date: candidate.session_date,
+        start_time: candidate.start_time,
+        end_time: candidate.end_time,
+        location: candidate.location,
+        venue: null,
+        status: 'draft',
+        auto_created: true,
+      };
+      console.log(
+        '[systeme-radio] Attempting upsert with payload:',
+        JSON.stringify(insertPayload)
+      );
+
+      const { data: insertedEvent, error: upsertError } = await supabase
+        .from('events')
+        .upsert(insertPayload, { onConflict: 'session_label', ignoreDuplicates: true })
+        .select('id')
+        .maybeSingle();
+
+      if (upsertError) {
+        console.error(
+          '[systeme-radio] Upsert error:',
+          upsertError.code,
+          upsertError.message,
+          upsertError.details
+        );
+      }
+      console.log(
+        '[systeme-radio] Upsert returned:',
+        insertedEvent ? `id=${insertedEvent.id}` : 'null'
+      );
+
+      if (insertedEvent) {
+        matchedEventId = insertedEvent.id;
+        console.log(
+          '[systeme-radio] Auto-created draft event from radio:',
+          label,
+          '→ event_id:',
+          matchedEventId
+        );
+      } else {
+        // Conflict path: another request created this event concurrently. Re-fetch.
+        const { data: existingEvent, error: refetchError } = await supabase
+          .from('events')
+          .select('id')
+          .eq('session_label', candidate.session_label)
+          .maybeSingle();
+
+        if (refetchError) {
+          console.error(
+            '[systeme-radio] Re-fetch error:',
+            refetchError.code,
+            refetchError.message
+          );
+        }
+
+        if (existingEvent) {
+          matchedEventId = existingEvent.id;
+          console.log(
+            '[systeme-radio] Race recovered, found existing event:',
+            candidate.session_label,
+            '→',
+            matchedEventId
+          );
+        } else {
+          console.error(
+            '[systeme-radio] Upsert returned null and re-fetch also failed for label:',
+            candidate.session_label
+          );
+        }
+      }
+    } else {
+      console.warn(
+        '[systeme-radio] Radio click for unparseable label:',
+        label,
+        '— reason:',
+        parseResult.reason
+      );
+    }
+  }
 
   // Expire 1 hour from now
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
-  const supabase = createAdminClient();
   const { data, error } = await supabase
     .from('pending_event_selections')
     .insert({

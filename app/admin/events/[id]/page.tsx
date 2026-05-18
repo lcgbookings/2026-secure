@@ -82,10 +82,10 @@ export default async function EventDetailPage({
     .select('id', { count: 'exact', head: true })
     .eq('event_id', event.id);
 
-  const dropOff =
-    radioClicks && radioClicks > 0
-      ? Math.round(((radioClicks - (paidBookings ?? 0)) / radioClicks) * 100)
-      : null;
+  const clicks = radioClicks ?? 0;
+  const bookingsCount = paidBookings ?? 0;
+  const abandoned = clicks > bookingsCount ? clicks - bookingsCount : 0;
+  const conversionPct = clicks > 0 ? Math.round((bookingsCount / clicks) * 100) : null;
 
   // Filter by search term locally (Postgres ILIKE across joined tables is messier than client-side filter on small lists)
   type BookingRow = NonNullable<typeof bookings>[number];
@@ -136,14 +136,23 @@ export default async function EventDetailPage({
         </p>
       </div>
 
-      <div>
-        <h2 className="text-sm font-semibold uppercase text-neutral-500 mb-3">
-          Funnel snapshot
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <StatBox label="Radio clicks" value={radioClicks ?? 0} />
-          <StatBox label="Paid bookings" value={paidBookings ?? 0} />
-          <StatBox label="Drop-off" value={dropOff === null ? '—' : `${dropOff}%`} />
+      <div className="border rounded-lg p-4 grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div>
+          <p className="text-xs uppercase text-neutral-500">Radio clicks</p>
+          <p className="text-2xl font-semibold">{clicks}</p>
+          <p className="text-xs text-neutral-500 mt-1">Customers who selected this session</p>
+        </div>
+        <div>
+          <p className="text-xs uppercase text-neutral-500">Paid bookings</p>
+          <p className="text-2xl font-semibold">{bookingsCount}</p>
+          <p className="text-xs text-neutral-500 mt-1">
+            {conversionPct !== null ? `${conversionPct}% of clicks` : 'No clicks recorded'}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs uppercase text-neutral-500">Abandoned</p>
+          <p className={`text-2xl font-semibold ${abandoned > 0 ? 'text-neutral-700' : 'text-neutral-400'}`}>{abandoned}</p>
+          <p className="text-xs text-neutral-500 mt-1">Selected but did not complete payment</p>
         </div>
       </div>
 
