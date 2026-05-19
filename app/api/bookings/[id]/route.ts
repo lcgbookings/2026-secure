@@ -13,7 +13,17 @@ interface PatchBody {
   responsibility_level?: string | null;
   venue_override?: string;
   pre_event_notes?: string;
+  pricing_disclosed?: boolean;
+  pricing_response?: 'open_to_invest' | 'not_in_position' | 'undecided' | 'not_asked' | null;
+  calendar_invite_pending_update?: boolean;
 }
+
+const VALID_PRICING_RESPONSES = [
+  'open_to_invest',
+  'not_in_position',
+  'undecided',
+  'not_asked',
+] as const;
 
 export async function PATCH(
   req: NextRequest,
@@ -58,6 +68,29 @@ export async function PATCH(
   if (body.venue_override !== undefined) updates.venue_override = body.venue_override;
   if (body.pre_event_notes !== undefined)
     updates.pre_event_notes = body.pre_event_notes;
+
+  if (body.pricing_disclosed !== undefined) {
+    if (typeof body.pricing_disclosed !== 'boolean') {
+      return NextResponse.json({ error: 'pricing_disclosed must be boolean' }, { status: 400 });
+    }
+    updates.pricing_disclosed = body.pricing_disclosed;
+  }
+  if (body.pricing_response !== undefined) {
+    const v = body.pricing_response;
+    if (v !== null && !(VALID_PRICING_RESPONSES as readonly string[]).includes(v)) {
+      return NextResponse.json({ error: 'Invalid pricing_response' }, { status: 400 });
+    }
+    updates.pricing_response = v;
+  }
+  if (body.calendar_invite_pending_update !== undefined) {
+    if (typeof body.calendar_invite_pending_update !== 'boolean') {
+      return NextResponse.json(
+        { error: 'calendar_invite_pending_update must be boolean' },
+        { status: 400 }
+      );
+    }
+    updates.calendar_invite_pending_update = body.calendar_invite_pending_update;
+  }
 
   if (body.confirmation_status !== undefined) {
     updates.confirmation_status = body.confirmation_status;

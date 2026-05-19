@@ -13,7 +13,10 @@ import {
   labelProgrammeStatus,
   formatRelativeTime,
 } from '@/lib/format';
-import CallConsoleForm, { type CallAttemptRow } from './call-console-form';
+import CallConsoleForm, {
+  type CallAttemptRow,
+  type PricingResponse,
+} from './call-console-form';
 import AssignToEvent from './assign-to-event';
 
 export const dynamic = 'force-dynamic';
@@ -40,6 +43,8 @@ export default async function CallConsolePage({
       goals,
       experience_level,
       responsibility_level,
+      pricing_disclosed,
+      pricing_response,
       rescheduled_from_booking_id,
       programme_signup_status,
       programme_signup_at,
@@ -78,60 +83,43 @@ export default async function CallConsolePage({
   const event = Array.isArray(booking.event) ? booking.event[0] : booking.event;
   const payment = Array.isArray(booking.payments) ? booking.payments[0] : null;
 
-  // Upcoming events (exclude this booking's current event from reschedule list)
+  // Upcoming events for the reschedule picker (scheduled + future, exclude current event)
   const { data: upcomingEventsRaw } = await supabase
     .from('events')
     .select('id, session_label, start_time, end_time')
-    .gt('end_time', new Date().toISOString())
+    .eq('status', 'scheduled')
+    .gt('start_time', new Date().toISOString())
     .order('start_time', { ascending: true });
 
   const upcomingEvents = (upcomingEventsRaw ?? []).filter(
     (e) => e.id !== booking.event_id
   );
 
-  // Call history for this booking
+  // Call history for this booking (new column names: call_type, attempted_at, etc.)
   const { data: callAttemptsRaw } = await supabase
     .from('call_attempts')
     .select(
       `
       *,
-      reschedule_to_booking:bookings!call_attempts_reschedule_to_booking_id_fkey (
+      rescheduled_to_booking:bookings!call_attempts_rescheduled_to_booking_id_fkey (
         id,
         event:events ( session_label )
       )
     `
     )
     .eq('booking_id', booking.id)
-    .order('created_at', { ascending: false });
+    .order('attempted_at', { ascending: false });
 
   const callAttempts = (callAttemptsRaw ?? []) as unknown as CallAttemptRow[];
 
-  // Default attempt type: derived from event timing + history
-  function deriveDefaultAttemptType():
-    | 'initial'
-    | '24h_reminder'
-    | 'stale_followup'
-    | 'post_event' {
-    const now = Date.now();
-    const endTs = event?.end_time ? new Date(event.end_time).getTime() : null;
-    const startTs = event?.start_time ? new Date(event.start_time).getTime() : null;
-
-    if (endTs !== null && endTs < now) return 'post_event';
-
-    const hasInitial = callAttempts.some((a) => a.attempt_type === 'initial');
-    const within24h =
-      startTs !== null && startTs - now <= 24 * 60 * 60 * 1000 && startTs > now;
-    if (within24h && hasInitial) return '24h_reminder';
-
-    if (callAttempts.length > 0) {
-      const latestTs = new Date(callAttempts[0].created_at).getTime();
-      const tenDaysMs = 10 * 24 * 60 * 60 * 1000;
-      if (now - latestTs > tenDaysMs) return 'stale_followup';
-    }
-
-    return 'initial';
-  }
-  const defaultAttemptType = deriveDefaultAttemptType();
+  // Admin users for resolving attempted_by_admin_id → full name in call history
+  const { data: adminUsersRaw } = await supabase
+    .from('admin_users')
+    .select('id, full_name');
+  const adminUsers = (adminUsersRaw ?? []).map((a) => ({
+    id: a.id as string,
+    full_name: (a.full_name as string | null) ?? 'Unknown',
+  }));
 
   // If this booking was rescheduled from another, fetch the original for the banner
   let rescheduledFrom:
@@ -309,6 +297,10 @@ export default async function CallConsolePage({
         <div className="md:col-span-2">
           <CallConsoleForm
             bookingId={booking.id}
+            initialPricing={{
+              pricing_disclosed: booking.pricing_disclosed ?? false,
+              pricing_response: (booking.pricing_response ?? null) as PricingResponse | null,
+            }}
             initialDetails={{
               goals: booking.goals ?? '',
               experience_level: booking.experience_level ?? '',
@@ -316,12 +308,12 @@ export default async function CallConsolePage({
               venue_override: booking.venue_override ?? '',
               pre_event_notes: booking.pre_event_notes ?? '',
             }}
-            defaultAttemptType={defaultAttemptType}
             callAttempts={callAttempts}
             upcomingEvents={upcomingEvents.map((e) => ({
               id: e.id,
               label: formatEventDateTime(e.start_time, e.end_time),
             }))}
+            adminUsers={adminUsers}
           />
         </div>
       </div>

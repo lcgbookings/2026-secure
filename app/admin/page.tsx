@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { formatEventDateTime, formatEventDate } from '@/lib/format';
+import MarkInviteUpdatedButton from './mark-invite-updated-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +21,8 @@ type EventEmbed = {
 type BookingRow = {
   id: string;
   created_at?: string;
+  last_contact_at?: string | null;
+  rescheduled_from_booking_id?: string | null;
   attendee: Attendee | Attendee[] | null;
   event: EventEmbed | EventEmbed[] | null;
 };
@@ -33,10 +36,49 @@ function unwrapEvent(e: EventEmbed | EventEmbed[] | null): EventEmbed | null {
   return Array.isArray(e) ? e[0] ?? null : e;
 }
 
+function daysAgo(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const diff = Date.now() - new Date(iso).getTime();
+  return Math.floor(diff / (24 * 60 * 60 * 1000));
+}
+
 export default async function AdminHome() {
   const supabase = createAdminClient();
   const nowIso = new Date().toISOString();
   const now = Date.now();
+  const in24hMs = now + 24 * 60 * 60 * 1000;
+  const in2daysMs = now + 2 * 24 * 60 * 60 * 1000;
+  const tenDaysAgoMs = now - 10 * 24 * 60 * 60 * 1000;
+  const sixHoursAgoIso = new Date(now - 6 * 60 * 60 * 1000).toISOString();
+  const fourteenDaysAgoMs = now - 14 * 24 * 60 * 60 * 1000;
+
+  // ---------- Auto-flip pending attendance to no_show for sessions that ended 6h+ ago ----------
+  // Idempotent: runs on every dashboard load. Bookings already at 'no_show' don't change.
+  try {
+    const { data: endedEvents } = await supabase
+      .from('events')
+      .select('id')
+      .eq('status', 'scheduled')
+      .lt('end_time', sixHoursAgoIso);
+
+    const endedIds = (endedEvents ?? []).map((e) => e.id);
+    if (endedIds.length > 0) {
+      const { error: autoFlipError } = await supabase
+        .from('bookings')
+        .update({ attendance_status: 'no_show' })
+        .eq('confirmation_status', 'confirmed')
+        .eq('attendance_status', 'pending')
+        .is('signed_in_at', null)
+        .is('post_session_submitted_at', null)
+        .in('event_id', endedIds);
+
+      if (autoFlipError) {
+        console.error('[dashboard auto-flip] update failed', autoFlipError);
+      }
+    }
+  } catch (err) {
+    console.error('[dashboard auto-flip] threw', err);
+  }
 
   // ---------- upcoming events list (drafts excluded) ----------
   const { data: events } = await supabase
@@ -75,173 +117,143 @@ export default async function AdminHome() {
     statsByEvent.set(b.event_id, s);
   }
 
-  // ---------- QUEUE 1: post-event no-show reschedules ----------
-  const { data: postEventNoShowsRaw } = await supabase
+  // ---------- QUEUE 1: 24-hour reminders ----------
+  // Bookings with status in ('confirmed','pending') AND event scheduled AND event.start_time in [now, now+24h)
+  // AND (last_contact_at is null OR last_contact_at < event.start_time - 24h)
+  const { data: reminderCandidatesRaw } = await supabase
     .from('bookings')
     .select(
-      `id,
+      `id, last_contact_at,
        attendee:attendees!inner (first_name, last_name, email, phone),
-       event:events!inner (session_label, start_time, end_time)`
+       event:events!inner (id, session_label, start_time, end_time, status)`
     )
-    .eq('attendance_status', 'no_show')
-    .is('no_show_lost_at', null);
+    .in('confirmation_status', ['confirmed', 'pending']);
 
-  const postEventNoShows = ((postEventNoShowsRaw ?? []) as unknown as BookingRow[])
+  const reminderCandidates = (reminderCandidatesRaw ?? []) as unknown as BookingRow[];
+  const twentyFourHourReminders = reminderCandidates
     .filter((b) => {
-      const ev = unwrapEvent(b.event);
-      return ev?.end_time && new Date(ev.end_time).getTime() < now;
+      const ev = unwrapEvent(b.event) as
+        | (EventEmbed & { status?: string })
+        | null;
+      if (!ev || ev.status !== 'scheduled' || !ev.start_time) return false;
+      const startTs = new Date(ev.start_time).getTime();
+      if (startTs < now || startTs > in24hMs) return false;
+      const lc = b.last_contact_at;
+      if (!lc) return true;
+      const lcTs = new Date(lc).getTime();
+      return lcTs < startTs - 24 * 60 * 60 * 1000;
     })
     .sort((a, b) => {
       const aT = new Date(unwrapEvent(a.event)?.start_time ?? 0).getTime();
       const bT = new Date(unwrapEvent(b.event)?.start_time ?? 0).getTime();
-      return bT - aT; // DESC
+      return aT - bT;
     });
 
-  // ---------- QUEUE 2: 24-hour reminders ----------
-  const next24hIso = new Date(now + 24 * 60 * 60 * 1000).toISOString();
-  const { data: confirmedSoonRaw } = await supabase
+  // ---------- QUEUE 2: new bookings to call ----------
+  // confirmation_status='pending', last_contact_at IS NULL, event scheduled AND future
+  const { data: newToCallRaw } = await supabase
     .from('bookings')
     .select(
-      `id,
-       confirmation_status,
+      `id, created_at, last_contact_at,
        attendee:attendees!inner (first_name, last_name, email, phone),
-       event:events!inner (id, session_label, start_time)`
-    )
-    .eq('confirmation_status', 'confirmed')
-    .gte('event.start_time', nowIso)
-    .lte('event.start_time', next24hIso);
-
-  const confirmedSoon = (confirmedSoonRaw ?? []) as unknown as BookingRow[];
-  const confirmedSoonIds = confirmedSoon.map((b) => b.id);
-
-  const { data: reminderAttempts } = await supabase
-    .from('call_attempts')
-    .select('booking_id')
-    .in(
-      'booking_id',
-      confirmedSoonIds.length ? confirmedSoonIds : ['00000000-0000-0000-0000-000000000000']
-    )
-    .eq('attempt_type', '24h_reminder');
-  const remindedIds = new Set((reminderAttempts ?? []).map((a) => a.booking_id));
-
-  const twentyFourHourReminders = confirmedSoon
-    .filter((b) => !remindedIds.has(b.id))
-    .sort((a, b) => {
-      const aT = new Date(unwrapEvent(a.event)?.start_time ?? 0).getTime();
-      const bT = new Date(unwrapEvent(b.event)?.start_time ?? 0).getTime();
-      return aT - bT; // ASC
-    });
-
-  // ---------- QUEUE 3: new bookings to call ----------
-  const { data: pendingBookingsRaw } = await supabase
-    .from('bookings')
-    .select(
-      `id,
-       created_at,
-       attendee:attendees!inner (first_name, last_name, email, phone),
-       event:events!inner (id, session_label, start_time, end_time)`
+       event:events!inner (id, session_label, start_time, end_time, status)`
     )
     .eq('confirmation_status', 'pending')
+    .is('last_contact_at', null)
     .order('created_at', { ascending: true });
 
-  const pendingBookings = (pendingBookingsRaw ?? []) as unknown as BookingRow[];
-  const pendingIds = pendingBookings.map((b) => b.id);
-
-  const { data: attemptedAlready } = await supabase
-    .from('call_attempts')
-    .select('booking_id')
-    .in(
-      'booking_id',
-      pendingIds.length ? pendingIds : ['00000000-0000-0000-0000-000000000000']
-    );
-  const attemptedIds = new Set((attemptedAlready ?? []).map((a) => a.booking_id));
-
-  const newToCall = pendingBookings.filter((b) => {
-    if (attemptedIds.has(b.id)) return false;
-    const ev = unwrapEvent(b.event);
-    return ev?.end_time ? new Date(ev.end_time).getTime() > now : false;
+  const newToCall = ((newToCallRaw ?? []) as unknown as BookingRow[]).filter((b) => {
+    const ev = unwrapEvent(b.event) as (EventEmbed & { status?: string }) | null;
+    if (!ev || ev.status !== 'scheduled' || !ev.start_time) return false;
+    return new Date(ev.start_time).getTime() > now;
   });
 
-  // ---------- QUEUE 4: stale follow-ups ----------
-  const { data: activeBookingsRaw } = await supabase
+  // ---------- QUEUE 3: 10-day stale follow-ups ----------
+  // confirmation_status='confirmed', last_contact_at < now - 10 days, event > now + 2 days, event scheduled
+  const { data: staleCandidatesRaw } = await supabase
     .from('bookings')
     .select(
-      `id,
-       confirmation_status,
+      `id, last_contact_at,
+       attendee:attendees!inner (first_name, last_name, email, phone),
+       event:events!inner (id, session_label, start_time, end_time, status)`
+    )
+    .eq('confirmation_status', 'confirmed')
+    .lt('last_contact_at', new Date(tenDaysAgoMs).toISOString())
+    .order('last_contact_at', { ascending: true });
+
+  const staleFollowups = ((staleCandidatesRaw ?? []) as unknown as BookingRow[]).filter(
+    (b) => {
+      const ev = unwrapEvent(b.event) as (EventEmbed & { status?: string }) | null;
+      if (!ev || ev.status !== 'scheduled' || !ev.start_time) return false;
+      return new Date(ev.start_time).getTime() > in2daysMs;
+    }
+  );
+
+  // ---------- QUEUE 5: post-event no-show recovery ----------
+  const { data: noShowRecoveryRaw } = await supabase
+    .from('bookings')
+    .select(
+      `id, last_contact_at,
        attendee:attendees!inner (first_name, last_name, email, phone),
        event:events!inner (id, session_label, start_time, end_time)`
     )
-    .neq('confirmation_status', 'cancelled');
+    .eq('attendance_status', 'no_show');
 
-  const activeBookings = (activeBookingsRaw ?? []) as unknown as BookingRow[];
-  const activeIds = activeBookings
+  const noShowRecovery = ((noShowRecoveryRaw ?? []) as unknown as BookingRow[])
     .filter((b) => {
       const ev = unwrapEvent(b.event);
-      return ev?.end_time ? new Date(ev.end_time).getTime() > now : false;
-    })
-    .map((b) => b.id);
-
-  const { data: latestAttempts } = await supabase
-    .from('call_attempts')
-    .select('booking_id, created_at')
-    .in(
-      'booking_id',
-      activeIds.length ? activeIds : ['00000000-0000-0000-0000-000000000000']
-    )
-    .order('created_at', { ascending: false });
-
-  const latestMap = new Map<string, string>();
-  for (const a of latestAttempts ?? []) {
-    if (!latestMap.has(a.booking_id)) latestMap.set(a.booking_id, a.created_at);
-  }
-
-  const tenDaysAgoMs = now - 10 * 24 * 60 * 60 * 1000;
-  const staleFollowups = activeBookings
-    .filter((b) => {
-      const ev = unwrapEvent(b.event);
-      if (!ev?.end_time || new Date(ev.end_time).getTime() <= now) return false;
-      const latest = latestMap.get(b.id);
-      if (!latest) return false;
-      return new Date(latest).getTime() < tenDaysAgoMs;
+      if (!ev?.end_time) return false;
+      const endTs = new Date(ev.end_time).getTime();
+      if (!(endTs > fourteenDaysAgoMs && endTs < now)) return false;
+      // Exclude bookings where Abel has already had a post-event conversation
+      if (b.last_contact_at) {
+        const contactTs = new Date(b.last_contact_at).getTime();
+        if (contactTs > endTs) return false;
+      }
+      return true;
     })
     .sort((a, b) => {
-      const aT = new Date(latestMap.get(a.id) ?? 0).getTime();
-      const bT = new Date(latestMap.get(b.id) ?? 0).getTime();
-      return aT - bT; // most stale first (oldest latest-attempt)
+      const aT = new Date(unwrapEvent(a.event)?.end_time ?? 0).getTime();
+      const bT = new Date(unwrapEvent(b.event)?.end_time ?? 0).getTime();
+      return bT - aT; // DESC — most recent sessions first
     });
 
-  // ---------- QUEUE: Follow-ups due ----------
-  const { data: followUpsDueRaw } = await supabase
-    .from('bookings')
-    .select(
-      `id,
-       next_follow_up_at,
-       attendee:attendees!inner (first_name, last_name, email, phone),
-       event:events!inner (id, session_label, start_time)`
-    )
-    .not('next_follow_up_at', 'is', null)
-    .lte('next_follow_up_at', nowIso)
-    .order('next_follow_up_at', { ascending: true });
-
-  const followUpsDue = (followUpsDueRaw ?? []) as unknown as BookingRow[];
-
-  // ---------- QUEUE 5: calendar invites to update ----------
+  // ---------- QUEUE 4: calendar invites to update ----------
   const { data: invitesToUpdateRaw } = await supabase
     .from('bookings')
     .select(
-      `id,
+      `id, rescheduled_from_booking_id,
        attendee:attendees!inner (first_name, last_name, email, phone),
        event:events!inner (id, session_label, start_time)`
     )
     .eq('calendar_invite_pending_update', true);
 
-  const invitesToUpdate = ((invitesToUpdateRaw ?? []) as unknown as BookingRow[]).sort(
+  const invitesToUpdateBase = ((invitesToUpdateRaw ?? []) as unknown as BookingRow[]).sort(
     (a, b) => {
       const aT = new Date(unwrapEvent(a.event)?.start_time ?? 0).getTime();
       const bT = new Date(unwrapEvent(b.event)?.start_time ?? 0).getTime();
       return aT - bT;
     }
   );
+
+  // Resolve "Rescheduled from <session_label>" by fetching the original booking's event
+  const fromIds = invitesToUpdateBase
+    .map((b) => b.rescheduled_from_booking_id)
+    .filter((id): id is string => !!id);
+
+  const fromLabelByOriginalId = new Map<string, string>();
+  if (fromIds.length > 0) {
+    const { data: origRows } = await supabase
+      .from('bookings')
+      .select('id, event:events ( session_label )')
+      .in('id', fromIds);
+    for (const r of origRows ?? []) {
+      const ev = Array.isArray(r.event) ? r.event[0] : r.event;
+      if (ev?.session_label) {
+        fromLabelByOriginalId.set(r.id as string, ev.session_label as string);
+      }
+    }
+  }
 
   // ---------- Auto-created events needing review ----------
   const { data: autoCreatedNeedingReview } = await supabase
@@ -284,24 +296,132 @@ export default async function AdminHome() {
         </div>
       ) : null}
 
-      <QueueSection
-        title="Post-event no-show reschedule"
-        rows={postEventNoShows}
-        tail="Tap to call"
-      />
+      {/* QUEUE 1: 24-hour reminders */}
       <QueueSection
         title="24-hour reminders"
+        accent="red"
         rows={twentyFourHourReminders}
         tail="Tap to call"
       />
-      <QueueSection title="New bookings to call" rows={newToCall} tail="Tap to call" />
-      <QueueSection title="Stale follow-ups" rows={staleFollowups} tail="Tap to call" />
-      <QueueSection title="Follow-ups due" rows={followUpsDue} tail="Call now" />
+
+      {/* QUEUE 2: new bookings to call */}
       <QueueSection
-        title="Calendar invites to update"
-        rows={invitesToUpdate}
-        tail="Update invite"
+        title="New bookings to call"
+        accent="neutral"
+        rows={newToCall}
+        tail="Tap to call"
       />
+
+      {/* QUEUE 3: 10-day stale follow-ups */}
+      <QueueSection
+        title="10-day stale follow-ups"
+        accent="blue"
+        rows={staleFollowups}
+        tail="Tap to call"
+        renderExtra={(b) => {
+          const d = daysAgo(b.last_contact_at);
+          return d !== null ? `Last contact: ${d} days ago` : null;
+        }}
+      />
+
+      {/* QUEUE 5: post-event no-show recovery */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <h2 className="text-sm font-semibold uppercase text-neutral-500">
+            Post-event no-show recovery
+          </h2>
+          <CountBadge n={noShowRecovery.length} accent="amber" />
+        </div>
+
+        {noShowRecovery.length === 0 ? (
+          <div className="border rounded-lg p-4 text-sm text-neutral-500 text-center">
+            No outstanding no-shows.
+          </div>
+        ) : (
+          <div className="border rounded-lg divide-y">
+            {noShowRecovery.map((b) => {
+              const a = unwrapAttendee(b.attendee);
+              const ev = unwrapEvent(b.event);
+              if (!a || !ev) return null;
+              const sinceDays = ev.end_time ? daysAgo(ev.end_time) : null;
+              return (
+                <Link
+                  key={b.id}
+                  href={`/admin/bookings/${b.id}`}
+                  className="flex items-center justify-between gap-4 p-3 hover:bg-neutral-50 transition"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm">
+                      {a.first_name} {a.last_name}
+                    </p>
+                    <p className="text-xs text-neutral-500 truncate">
+                      {a.email ?? 'no email'} · {a.phone ?? 'no phone'}
+                    </p>
+                  </div>
+                  <div className="text-right text-xs text-neutral-600 whitespace-nowrap">
+                    <p>{ev.start_time ? formatEventDate(ev.start_time) : '—'}</p>
+                    {sinceDays !== null && (
+                      <p className="text-neutral-400">{sinceDays} days ago</p>
+                    )}
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* QUEUE 4: calendar invites to update */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <h2 className="text-sm font-semibold uppercase text-neutral-500">
+            Calendar invites to update
+          </h2>
+          <CountBadge n={invitesToUpdateBase.length} accent="amber" />
+        </div>
+
+        {invitesToUpdateBase.length === 0 ? (
+          <div className="border rounded-lg p-4 text-sm text-neutral-500 text-center">
+            All caught up.
+          </div>
+        ) : (
+          <div className="border rounded-lg divide-y">
+            {invitesToUpdateBase.map((b) => {
+              const a = unwrapAttendee(b.attendee);
+              const ev = unwrapEvent(b.event);
+              if (!a || !ev) return null;
+              const fromLabel = b.rescheduled_from_booking_id
+                ? fromLabelByOriginalId.get(b.rescheduled_from_booking_id)
+                : null;
+              return (
+                <div
+                  key={b.id}
+                  className="flex items-center justify-between gap-4 p-3"
+                >
+                  <Link
+                    href={`/admin/bookings/${b.id}`}
+                    className="flex-1 min-w-0 hover:bg-neutral-50 -m-3 p-3 rounded transition"
+                  >
+                    <p className="font-medium text-sm">
+                      {a.first_name} {a.last_name}
+                    </p>
+                    <p className="text-xs text-neutral-500">
+                      {ev.start_time ? formatEventDate(ev.start_time) : '—'}
+                      {ev.session_label ? ` · ${ev.session_label}` : ''}
+                    </p>
+                    {fromLabel && (
+                      <p className="text-xs text-neutral-500 italic mt-0.5">
+                        ↺ Rescheduled from {fromLabel}
+                      </p>
+                    )}
+                  </Link>
+                  <MarkInviteUpdatedButton bookingId={b.id} />
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {(autoCreatedNeedingReview?.length ?? 0) > 0 && (
         <div>
@@ -378,52 +498,85 @@ export default async function AdminHome() {
 }
 
 // ---------- shared queue section ----------
+type Accent = 'red' | 'amber' | 'blue' | 'neutral';
+
 function QueueSection({
   title,
   rows,
   tail,
+  accent,
+  renderExtra,
 }: {
   title: string;
   rows: BookingRow[];
   tail: string;
+  accent: Accent;
+  renderExtra?: (b: BookingRow) => string | null;
 }) {
-  if (rows.length === 0) return null;
   return (
     <div>
-      <h2 className="text-sm font-semibold uppercase text-neutral-500 mb-3">
-        {title} ({rows.length})
-      </h2>
-      <div className="border rounded-lg divide-y">
-        {rows.map((b) => {
-          const a = unwrapAttendee(b.attendee);
-          const ev = unwrapEvent(b.event);
-          if (!a || !ev) return null;
-          return (
-            <Link
-              key={b.id}
-              href={`/admin/bookings/${b.id}`}
-              className="flex items-center justify-between gap-4 p-3 hover:bg-neutral-50 transition"
-            >
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm">
-                  {a.first_name} {a.last_name}
-                </p>
-                <p className="text-xs text-neutral-500 truncate">
-                  {a.email ?? 'no email'} · {a.phone ?? 'no phone'}
-                </p>
-              </div>
-              <div className="text-right text-xs text-neutral-600 whitespace-nowrap">
-                <p>{ev.start_time ? formatEventDate(ev.start_time) : '—'}</p>
-                <p className="text-neutral-500 truncate max-w-[180px]">
-                  {ev.session_label ?? ''}
-                </p>
-                <p className="text-neutral-400">{tail}</p>
-              </div>
-            </Link>
-          );
-        })}
+      <div className="flex items-center gap-2 mb-3">
+        <h2 className="text-sm font-semibold uppercase text-neutral-500">{title}</h2>
+        <CountBadge n={rows.length} accent={accent} />
       </div>
+
+      {rows.length === 0 ? (
+        <div className="border rounded-lg p-4 text-sm text-neutral-500 text-center">
+          All caught up.
+        </div>
+      ) : (
+        <div className="border rounded-lg divide-y">
+          {rows.map((b) => {
+            const a = unwrapAttendee(b.attendee);
+            const ev = unwrapEvent(b.event);
+            if (!a || !ev) return null;
+            const extra = renderExtra ? renderExtra(b) : null;
+            return (
+              <Link
+                key={b.id}
+                href={`/admin/bookings/${b.id}`}
+                className="flex items-center justify-between gap-4 p-3 hover:bg-neutral-50 transition"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-sm">
+                    {a.first_name} {a.last_name}
+                  </p>
+                  <p className="text-xs text-neutral-500 truncate">
+                    {a.email ?? 'no email'} · {a.phone ?? 'no phone'}
+                  </p>
+                  {extra && (
+                    <p className="text-xs text-neutral-500 mt-0.5">{extra}</p>
+                  )}
+                </div>
+                <div className="text-right text-xs text-neutral-600 whitespace-nowrap">
+                  <p>{ev.start_time ? formatEventDate(ev.start_time) : '—'}</p>
+                  <p className="text-neutral-500 truncate max-w-[180px]">
+                    {ev.session_label ?? ''}
+                  </p>
+                  <p className="text-neutral-400">{tail}</p>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      )}
     </div>
+  );
+}
+
+function CountBadge({ n, accent }: { n: number; accent: Accent }) {
+  const cls =
+    accent === 'red'
+      ? 'bg-red-100 text-red-800'
+      : accent === 'amber'
+      ? 'bg-amber-100 text-amber-800'
+      : accent === 'blue'
+      ? 'bg-blue-100 text-blue-800'
+      : 'bg-neutral-200 text-neutral-700';
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${cls}`}>
+      {n}
+    </span>
   );
 }
 
