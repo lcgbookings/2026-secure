@@ -1,26 +1,72 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  /* LCG brand colour tokens */
+  --color-lcg-deep-teal: #003941;
+  --color-lcg-deep-teal-dark: #002A33;
+  --color-lcg-teal: #48A9A6;
+  --color-lcg-blue: #0096FF;
+  --color-lcg-cream: #F1F1F1;
+  --color-lcg-body: #3B3B3B;
+
+  /* Brand fonts */
+  --font-serif: "Zilla Slab", Georgia, serif;
+  --font-sans: "DM Sans", Arial, sans-serif;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+@layer base {
+  html { background: #F1F1F1; }
+  h1, h2, h3, h4, h5, h6 { font-family: var(--font-serif); }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer components {
+  .lcg-card {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 1rem;
   }
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  .lcg-card-dark {
+    background: var(--color-lcg-deep-teal);
+    color: var(--color-lcg-cream);
+    border-radius: 1rem;
+  }
+  .lcg-btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.5rem;
+    background: var(--color-lcg-teal);
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-lcg-deep-teal);
+    transition: background 0.15s ease;
+  }
+  .lcg-btn-primary:hover {
+    background: color-mix(in srgb, var(--color-lcg-teal) 90%, transparent);
+  }
+  .lcg-btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.5rem;
+    border: 1px solid rgba(0,57,65,0.2);
+    background: white;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--color-lcg-deep-teal);
+    transition: border-color 0.15s ease;
+  }
+  .lcg-btn-secondary:hover {
+    border-color: rgba(0,57,65,0.4);
+  }
+  .lcg-eyebrow {
+    display: inline-block;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--color-lcg-blue);
+  }
 }

@@ -6,13 +6,14 @@ import {
   formatMoney,
   labelConfirmationStatus,
   labelAttendanceStatus,
-  colourConfirmationStatus,
   colourAttendanceStatus,
 } from '@/lib/format';
 import AttendeeFilters from './attendee-filters';
 import CalendarInvite from './calendar-invite';
 
 export const dynamic = 'force-dynamic';
+
+type ConfirmationStatus = 'confirmed' | 'pending' | 'unreachable' | 'cancelled';
 
 export default async function EventDetailPage({
   params,
@@ -34,7 +35,6 @@ export default async function EventDetailPage({
 
   if (!event) notFound();
 
-  // Load all bookings + attendee data for this event
   let query = supabase
     .from('bookings')
     .select(
@@ -71,7 +71,6 @@ export default async function EventDetailPage({
 
   const { data: bookings } = await query;
 
-  // Funnel snapshot
   const { count: radioClicks } = await supabase
     .from('pending_event_selections')
     .select('id', { count: 'exact', head: true })
@@ -85,9 +84,7 @@ export default async function EventDetailPage({
   const clicks = radioClicks ?? 0;
   const bookingsCount = paidBookings ?? 0;
   const abandoned = clicks > bookingsCount ? clicks - bookingsCount : 0;
-  const conversionPct = clicks > 0 ? Math.round((bookingsCount / clicks) * 100) : null;
 
-  // Filter by search term locally (Postgres ILIKE across joined tables is messier than client-side filter on small lists)
   type BookingRow = NonNullable<typeof bookings>[number];
   const search = (q ?? '').trim().toLowerCase();
   const filtered = (bookings ?? []).filter((b: BookingRow) => {
@@ -101,68 +98,51 @@ export default async function EventDetailPage({
     );
   });
 
-  // Stats
   const totalBooked = (bookings ?? []).length;
-  const confirmedCount = (bookings ?? []).filter(
-    (b: BookingRow) => b.confirmation_status === 'confirmed'
-  ).length;
-  const pendingCount = (bookings ?? []).filter(
-    (b: BookingRow) => b.confirmation_status === 'pending'
-  ).length;
 
   return (
-    <div className="space-y-6">
-      <div>
+    <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
+      <header className="mb-6">
         <Link
-          href="/admin"
-          className="text-sm text-neutral-500 hover:text-neutral-900"
+          href="/admin/events"
+          className="text-sm text-lcg-body-muted hover:text-lcg-deep-teal mb-2 inline-block"
         >
-          ← Back to dashboard
+          ← Back to events
         </Link>
-        <div className="mt-2 flex items-center gap-2 flex-wrap">
-          <h1 className="text-2xl font-bold">
-            {formatEventDateTime(event.start_time, event.end_time)}
-          </h1>
-          {event.auto_created && (
-            <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-neutral-200 text-neutral-700">
-              Auto-created
-            </span>
-          )}
-        </div>
-        <p className="text-sm text-neutral-600 mt-1">
+        <span className="lcg-eyebrow mb-2 mt-2 block">{event.status}</span>
+        <h1 className="font-serif text-3xl text-lcg-deep-teal">
+          {event.session_label}
+        </h1>
+        <p className="text-sm text-lcg-body-muted mt-1">
           {event.venue ?? 'Venue TBC'}
-          {event.capacity ? ` · capacity ${event.capacity}` : ''} ·{' '}
-          {event.event_type}
+          {event.start_time && event.end_time
+            ? ` · ${formatEventDateTime(event.start_time, event.end_time)}`
+            : ''}
+          {event.capacity ? ` · capacity ${event.capacity}` : ''}
         </p>
-      </div>
+      </header>
 
-      <div className="border rounded-lg p-4 grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <div>
-          <p className="text-xs uppercase text-neutral-500">Radio clicks</p>
-          <p className="text-2xl font-semibold">{clicks}</p>
-          <p className="text-xs text-neutral-500 mt-1">Customers who selected this session</p>
-        </div>
-        <div>
-          <p className="text-xs uppercase text-neutral-500">Paid bookings</p>
-          <p className="text-2xl font-semibold">{bookingsCount}</p>
-          <p className="text-xs text-neutral-500 mt-1">
-            {conversionPct !== null ? `${conversionPct}% of clicks` : 'No clicks recorded'}
+      {event.status === 'draft' && (
+        <div className="lcg-card-dark p-5 mb-6">
+          <div className="lcg-eyebrow text-lcg-blue mb-1">This event is in draft</div>
+          <p className="text-lcg-cream/80 text-sm mb-3">
+            Promote to scheduled once you&apos;ve confirmed the date and venue.
           </p>
+          <form action={`/api/admin/events/${event.id}/promote`} method="post">
+            <button type="submit" className="lcg-btn-primary">
+              Promote to scheduled →
+            </button>
+          </form>
         </div>
-        <div>
-          <p className="text-xs uppercase text-neutral-500">Abandoned</p>
-          <p className={`text-2xl font-semibold ${abandoned > 0 ? 'text-neutral-700' : 'text-neutral-400'}`}>{abandoned}</p>
-          <p className="text-xs text-neutral-500 mt-1">Selected but did not complete payment</p>
-        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <StatTile label="Radio clicks" value={clicks} />
+        <StatTile label="Paid bookings" value={bookingsCount} />
+        <StatTile label="Clicked but didn't pay" value={abandoned} />
       </div>
 
       <CalendarInvite eventId={event.id} initialUrl={event.calendar_url ?? null} />
-
-      <div className="grid grid-cols-3 gap-4">
-        <StatBox label="Booked" value={totalBooked} />
-        <StatBox label="Confirmed" value={confirmedCount} accent="green" />
-        <StatBox label="Pending calls" value={pendingCount} accent="amber" />
-      </div>
 
       <AttendeeFilters
         currentQuery={q ?? ''}
@@ -170,97 +150,94 @@ export default async function EventDetailPage({
         currentAttendance={attendance ?? 'all'}
       />
 
-      <div className="border rounded-lg overflow-hidden">
+      <section className="lcg-card p-6">
+        <h2 className="font-serif text-xl text-lcg-deep-teal mb-4">
+          Bookings ({totalBooked})
+        </h2>
+
         {filtered.length === 0 ? (
-          <div className="p-8 text-center text-neutral-500">
+          <p className="text-sm text-lcg-body-muted italic">
             {totalBooked === 0
               ? 'No bookings for this event yet.'
               : 'No bookings match your filters.'}
-          </div>
+          </p>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-neutral-50 border-b">
-              <tr>
-                <th className="text-left p-3 font-medium">Name</th>
-                <th className="text-left p-3 font-medium">Email</th>
-                <th className="text-left p-3 font-medium">Phone</th>
-                <th className="text-left p-3 font-medium">Ticket</th>
-                <th className="text-left p-3 font-medium">Confirmation</th>
-                <th className="text-left p-3 font-medium">Attendance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((b: BookingRow) => {
-                const a = Array.isArray(b.attendee) ? b.attendee[0] : b.attendee;
-                if (!a) return null;
-                const pay = Array.isArray(b.payments) ? b.payments[0] : null;
-                return (
-                  <tr
-                    key={b.id}
-                    className="border-b last:border-b-0 hover:bg-neutral-50 cursor-pointer"
+          <ul className="divide-y divide-lcg-deep-teal/10">
+            {filtered.map((b: BookingRow) => {
+              const a = Array.isArray(b.attendee) ? b.attendee[0] : b.attendee;
+              if (!a) return null;
+              const pay = Array.isArray(b.payments) ? b.payments[0] : null;
+              return (
+                <li key={b.id} className="py-3 first:pt-0 last:pb-0">
+                  <Link
+                    href={`/admin/bookings/${b.id}`}
+                    className="group flex justify-between items-center gap-4"
                   >
-                    <td className="p-3">
-                      <Link
-                        href={`/admin/bookings/${b.id}`}
-                        className="font-medium hover:underline"
-                      >
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium text-lcg-deep-teal group-hover:text-lcg-teal transition">
                         {a.first_name} {a.last_name}
-                      </Link>
-                    </td>
-                    <td className="p-3 text-neutral-600">{a.email}</td>
-                    <td className="p-3 text-neutral-600">{a.phone ?? '-'}</td>
-                    <td className="p-3 text-neutral-600">
-                      {b.ticket_type ?? '-'}
-                      {pay ? ` · ${formatMoney(pay.amount_gross, pay.currency)}` : ''}
-                    </td>
-                    <td className="p-3">
-                      <span
-                        className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${colourConfirmationStatus(
-                          b.confirmation_status
-                        )}`}
-                      >
-                        {labelConfirmationStatus(b.confirmation_status)}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      <span
-                        className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${colourAttendanceStatus(
-                          b.attendance_status
-                        )}`}
-                      >
-                        {labelAttendanceStatus(b.attendance_status)}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      </div>
+                      <div className="text-xs text-lcg-body-muted truncate">
+                        {a.email}
+                        {a.phone ? ` · ${a.phone}` : ''}
+                      </div>
+                      {pay && (
+                        <div className="text-xs text-lcg-body-muted mt-0.5">
+                          {b.ticket_type ?? 'Ticket'} ·{' '}
+                          {formatMoney(pay.amount_gross, pay.currency)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-right shrink-0 space-y-1">
+                      <ConfirmationBadge
+                        status={b.confirmation_status as ConfirmationStatus}
+                      />
+                      {b.attendance_status && b.attendance_status !== 'pending' && (
+                        <div>
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${colourAttendanceStatus(
+                              b.attendance_status
+                            )}`}
+                          >
+                            {labelAttendanceStatus(b.attendance_status)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
         )}
-      </div>
+      </section>
     </div>
   );
 }
 
-function StatBox({
-  label,
-  value,
-  accent = 'neutral',
-}: {
-  label: string;
-  value: number | string;
-  accent?: 'neutral' | 'green' | 'amber';
-}) {
-  const colour =
-    accent === 'green'
-      ? 'text-green-700'
-      : accent === 'amber'
-      ? 'text-amber-700'
-      : 'text-neutral-900';
+function StatTile({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="border rounded-lg p-4">
-      <p className="text-xs uppercase text-neutral-500">{label}</p>
-      <p className={`text-3xl font-bold mt-1 ${colour}`}>{value}</p>
+    <div className="lcg-card p-5">
+      <div className="lcg-eyebrow mb-3 text-lcg-deep-teal/60">{label}</div>
+      <div className="font-serif text-3xl text-lcg-deep-teal">{value}</div>
     </div>
+  );
+}
+
+function ConfirmationBadge({ status }: { status: ConfirmationStatus }) {
+  const colours: Record<ConfirmationStatus, string> = {
+    confirmed: 'bg-green-100 text-green-800',
+    pending: 'bg-amber-100 text-amber-800',
+    unreachable: 'bg-neutral-100 text-neutral-700',
+    cancelled: 'bg-red-100 text-red-700',
+  };
+  return (
+    <span
+      className={`inline-block ${
+        colours[status] ?? 'bg-neutral-100 text-neutral-700'
+      } text-xs font-medium px-2 py-0.5 rounded uppercase tracking-wide`}
+    >
+      {labelConfirmationStatus(status)}
+    </span>
   );
 }

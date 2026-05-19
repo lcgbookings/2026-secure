@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
   formatEventDateTime,
@@ -84,7 +85,6 @@ export default async function CallConsolePage({
   const event = Array.isArray(booking.event) ? booking.event[0] : booking.event;
   const payment = Array.isArray(booking.payments) ? booking.payments[0] : null;
 
-  // Upcoming events for the reschedule picker (scheduled + future, exclude current event)
   const { data: upcomingEventsRaw } = await supabase
     .from('events')
     .select('id, session_label, start_time, end_time')
@@ -96,7 +96,6 @@ export default async function CallConsolePage({
     (e) => e.id !== booking.event_id
   );
 
-  // Call history for this booking (new column names: call_type, attempted_at, etc.)
   const { data: callAttemptsRaw } = await supabase
     .from('call_attempts')
     .select(
@@ -113,7 +112,6 @@ export default async function CallConsolePage({
 
   const callAttempts = (callAttemptsRaw ?? []) as unknown as CallAttemptRow[];
 
-  // Admin users for resolving attempted_by_admin_id → full name in call history
   const { data: adminUsersRaw } = await supabase
     .from('admin_users')
     .select('id, full_name');
@@ -122,7 +120,6 @@ export default async function CallConsolePage({
     full_name: (a.full_name as string | null) ?? 'Unknown',
   }));
 
-  // If this booking was rescheduled from another, fetch the original for the banner
   let rescheduledFrom:
     | { id: string; session_label: string | null; start_time: string | null }
     | null = null;
@@ -144,44 +141,57 @@ export default async function CallConsolePage({
 
   const priorNoShowCount = await countNoShowsSinceLastAttended(attendee.id, booking.id);
 
+  const hasPreEvent = !!(
+    booking.goals ||
+    booking.experience_level ||
+    booking.responsibility_level
+  );
+  const hasReflection = !!booking.post_session_submitted_at;
+  const signedIn = !!booking.signed_in_at;
+
+  const backHref = event ? `/admin/events/${event.id}` : '/admin';
+
   return (
-    <div className="space-y-6">
-      <div>
+    <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
+      <header className="mb-6">
         <Link
-          href={event ? `/admin/events/${event.id}` : '/admin'}
-          className="text-sm text-neutral-500 hover:text-neutral-900"
+          href={backHref}
+          className="text-sm text-lcg-body-muted hover:text-lcg-deep-teal mb-2 inline-block"
         >
           ← Back
         </Link>
-        <h1 className="text-2xl font-bold mt-2">
+        <h1 className="font-serif text-3xl text-lcg-deep-teal">
           {attendee.first_name} {attendee.last_name}
         </h1>
-        <p className="text-sm text-neutral-600 mt-1">{attendee.email}</p>
+        <p className="text-sm text-lcg-body-muted mt-1">{attendee.email}</p>
         <ProgrammePill
           status={booking.programme_signup_status}
           signedUpAt={booking.programme_signup_at}
           eventEndIso={event?.end_time ?? null}
         />
         {booking.next_follow_up_at && (
-          <p className="text-sm text-neutral-600 mt-2">
+          <p className="text-sm text-lcg-body-muted mt-2">
             ↻ Follow up due {formatRelativeTime(booking.next_follow_up_at)}
           </p>
         )}
-      </div>
+      </header>
 
       {rescheduledFrom && (
-        <div className="border rounded-lg p-3 bg-amber-50 border-amber-200 text-sm text-amber-900">
-          ↺ This booking was rescheduled from{' '}
-          <Link
-            href={`/admin/bookings/${rescheduledFrom.id}`}
-            className="font-medium underline hover:text-amber-700"
-          >
-            {rescheduledFrom.session_label ?? 'an earlier session'}
-            {rescheduledFrom.start_time
-              ? ` on ${formatEventDate(rescheduledFrom.start_time)}`
-              : ''}
-          </Link>
-          .
+        <div className="flex items-center gap-2 text-sm text-lcg-body-muted bg-lcg-blue-tint border border-lcg-blue/30 rounded-xl px-4 py-2">
+          <span className="text-lcg-blue text-lg">↺</span>
+          <span>
+            This booking was rescheduled from{' '}
+            <Link
+              href={`/admin/bookings/${rescheduledFrom.id}`}
+              className="font-medium text-lcg-deep-teal hover:text-lcg-teal"
+            >
+              {rescheduledFrom.session_label ?? 'an earlier session'}
+              {rescheduledFrom.start_time
+                ? ` on ${formatEventDate(rescheduledFrom.start_time)}`
+                : ''}
+            </Link>
+            .
+          </span>
         </div>
       )}
 
@@ -196,104 +206,119 @@ export default async function CallConsolePage({
       )}
 
       {priorNoShowCount >= 2 && (
-        <div className="border border-amber-300 bg-amber-50 rounded-lg p-4 mb-4">
+        <div className="lcg-card border-amber-300 bg-amber-50 p-4">
           <div className="flex items-start gap-3">
             <div className="text-amber-700 text-xl leading-none mt-0.5">⚠</div>
-            <div className="flex-1">
+            <div>
               <p className="font-semibold text-amber-900 text-sm">
                 Repeat no-show pattern detected
               </p>
               <p className="text-sm text-amber-800 mt-1">
-                This customer has {priorNoShowCount} prior no-show{priorNoShowCount === 1 ? '' : 's'} since their last attended session. They will not receive the no-show recovery email sequence if they no-show again. Consider whether to engage on this call.
+                This customer has {priorNoShowCount} prior no-show
+                {priorNoShowCount === 1 ? '' : 's'} since their last attended session. They will not receive the no-show recovery email sequence if they no-show again. Consider whether to engage on this call.
               </p>
             </div>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="md:col-span-1 space-y-4">
-          <div className="border rounded-lg p-4 space-y-3 bg-blue-50/30">
-            <h2 className="text-xs uppercase text-neutral-500">Pre-event context</h2>
-            {(booking.goals || booking.experience_level || booking.responsibility_level) ? (
-              <>
-                {booking.goals && (
-                  <div>
-                    <p className="text-xs text-neutral-500">Why this is a priority</p>
-                    <p className="text-sm mt-0.5">{booking.goals}</p>
-                  </div>
-                )}
-                <Field label="Experience" value={labelExperienceLevel(booking.experience_level)} />
-                <Field label="Responsibility" value={labelResponsibilityLevel(booking.responsibility_level)} />
-              </>
-            ) : (
-              <p className="text-sm text-neutral-500 italic">
-                Not yet completed the pre-event survey.
-              </p>
-            )}
-          </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <ContextCard
+          title="Pre-event context"
+          empty={!hasPreEvent}
+          emptyMessage="Not yet completed the pre-event survey."
+        >
+          {booking.goals && (
+            <Field label="Why this is a priority" value={booking.goals} />
+          )}
+          <Field label="Experience" value={labelExperienceLevel(booking.experience_level)} />
+          <Field
+            label="Responsibility"
+            value={labelResponsibilityLevel(booking.responsibility_level)}
+          />
+        </ContextCard>
 
-          {/* Sign-in card */}
-          <div className="border rounded-lg p-4 space-y-3 bg-green-50/30">
-            <h2 className="text-xs uppercase text-neutral-500">Sign-in</h2>
-            {booking.signed_in_at ? (
-              <>
-                <Field label="Signed in" value={new Date(booking.signed_in_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })} />
-                {booking.is_first_session !== null && (
-                  <Field label="First session" value={booking.is_first_session ? 'Yes' : 'No (returning)'} />
-                )}
-                <Field label="Referral" value={labelReferralSource(booking.referral_source)} />
-                {booking.referral_detail && (
-                  <Field label="Detail" value={booking.referral_detail} />
-                )}
-                {typeof booking.pre_session_confidence === 'number' && (
-                  <Field label="Pre-session confidence" value={`${booking.pre_session_confidence}/10`} />
-                )}
-              </>
-            ) : (
-              <p className="text-sm text-neutral-500 italic">Not yet signed in.</p>
-            )}
-          </div>
+        <ContextCard
+          title="Sign-in"
+          empty={!signedIn}
+          emptyMessage="Not yet signed in."
+        >
+          <Field
+            label="Signed in"
+            value={
+              booking.signed_in_at
+                ? new Date(booking.signed_in_at).toLocaleString('en-GB', {
+                    dateStyle: 'short',
+                    timeStyle: 'short',
+                  })
+                : '-'
+            }
+          />
+          {booking.is_first_session !== null && (
+            <Field
+              label="First session"
+              value={booking.is_first_session ? 'Yes' : 'No (returning)'}
+            />
+          )}
+          <Field label="Referral" value={labelReferralSource(booking.referral_source)} />
+          {booking.referral_detail && (
+            <Field label="Detail" value={booking.referral_detail} />
+          )}
+          {typeof booking.pre_session_confidence === 'number' && (
+            <Field
+              label="Pre-session confidence"
+              value={`${booking.pre_session_confidence}/10`}
+            />
+          )}
+        </ContextCard>
 
-          {/* Post-session card */}
-          <div className="border rounded-lg p-4 space-y-3 bg-purple-50/30">
-            <h2 className="text-xs uppercase text-neutral-500">Post-session reflection</h2>
-            {booking.post_session_submitted_at ? (
-              <>
-                <Field label="Submitted" value={new Date(booking.post_session_submitted_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })} />
-                {typeof booking.session_value_rating === 'number' && (
-                  <Field label="Value rating" value={`${booking.session_value_rating}/10`} />
-                )}
-                <Field label="Relevance" value={labelRelevance(booking.session_relevance)} />
-                <Field label="Coaching interest" value={labelCoachingInterest(booking.coaching_interest)} />
-                {booking.most_useful_insight && (
-                  <div>
-                    <p className="text-xs text-neutral-500">Most useful insight</p>
-                    <p className="text-sm mt-0.5">{booking.most_useful_insight}</p>
-                  </div>
-                )}
-                {booking.hardest_under_pressure && (
-                  <div>
-                    <p className="text-xs text-neutral-500">Hardest under pressure</p>
-                    <p className="text-sm mt-0.5">{booking.hardest_under_pressure}</p>
-                  </div>
-                )}
-              </>
-            ) : (
-              <p className="text-sm text-neutral-500 italic">Not yet submitted reflection.</p>
-            )}
-          </div>
+        <ContextCard
+          title="Post-session reflection"
+          empty={!hasReflection}
+          emptyMessage="Not yet submitted reflection."
+        >
+          <Field
+            label="Submitted"
+            value={
+              booking.post_session_submitted_at
+                ? new Date(booking.post_session_submitted_at).toLocaleString('en-GB', {
+                    dateStyle: 'short',
+                    timeStyle: 'short',
+                  })
+                : '-'
+            }
+          />
+          {typeof booking.session_value_rating === 'number' && (
+            <Field label="Value rating" value={`${booking.session_value_rating}/10`} />
+          )}
+          <Field label="Relevance" value={labelRelevance(booking.session_relevance)} />
+          <Field
+            label="Coaching interest"
+            value={labelCoachingInterest(booking.coaching_interest)}
+          />
+          {booking.most_useful_insight && (
+            <Field label="Most useful insight" value={booking.most_useful_insight} />
+          )}
+          {booking.hardest_under_pressure && (
+            <Field label="Hardest under pressure" value={booking.hardest_under_pressure} />
+          )}
+        </ContextCard>
+      </div>
 
-          <div className="border rounded-lg p-4 space-y-3">
-            <h2 className="text-xs uppercase text-neutral-500">Attendee</h2>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="lcg-card p-5">
+          <div className="lcg-eyebrow mb-3 text-lcg-deep-teal/60">Attendee</div>
+          <div className="space-y-3 text-sm">
             <Field label="Name" value={`${attendee.first_name} ${attendee.last_name}`} />
-            <Field label="Email" value={attendee.email} />
+            <Field label="Email" value={attendee.email ?? '-'} />
             <Field label="Phone" value={attendee.phone ?? '-'} mono />
             <Field label="Company" value={attendee.company ?? '-'} />
           </div>
+        </div>
 
-          <div className="border rounded-lg p-4 space-y-3">
-            <h2 className="text-xs uppercase text-neutral-500">Booking</h2>
+        <div className="lcg-card p-5">
+          <div className="lcg-eyebrow mb-3 text-lcg-deep-teal/60">Booking</div>
+          <div className="space-y-3 text-sm">
             <Field label="Ticket" value={booking.ticket_type ?? '-'} />
             <Field
               label="Paid"
@@ -312,30 +337,51 @@ export default async function CallConsolePage({
             )}
           </div>
         </div>
-
-        <div className="md:col-span-2">
-          <CallConsoleForm
-            bookingId={booking.id}
-            initialPricing={{
-              pricing_disclosed: booking.pricing_disclosed ?? false,
-              pricing_response: (booking.pricing_response ?? null) as PricingResponse | null,
-            }}
-            initialDetails={{
-              goals: booking.goals ?? '',
-              experience_level: booking.experience_level ?? '',
-              responsibility_level: booking.responsibility_level ?? '',
-              venue_override: booking.venue_override ?? '',
-              pre_event_notes: booking.pre_event_notes ?? '',
-            }}
-            callAttempts={callAttempts}
-            upcomingEvents={upcomingEvents.map((e) => ({
-              id: e.id,
-              label: formatEventDateTime(e.start_time, e.end_time),
-            }))}
-            adminUsers={adminUsers}
-          />
-        </div>
       </div>
+
+      <CallConsoleForm
+        bookingId={booking.id}
+        initialPricing={{
+          pricing_disclosed: booking.pricing_disclosed ?? false,
+          pricing_response: (booking.pricing_response ?? null) as PricingResponse | null,
+        }}
+        initialDetails={{
+          goals: booking.goals ?? '',
+          experience_level: booking.experience_level ?? '',
+          responsibility_level: booking.responsibility_level ?? '',
+          venue_override: booking.venue_override ?? '',
+          pre_event_notes: booking.pre_event_notes ?? '',
+        }}
+        callAttempts={callAttempts}
+        upcomingEvents={upcomingEvents.map((e) => ({
+          id: e.id,
+          label: formatEventDateTime(e.start_time, e.end_time),
+        }))}
+        adminUsers={adminUsers}
+      />
+    </div>
+  );
+}
+
+function ContextCard({
+  title,
+  empty,
+  emptyMessage,
+  children,
+}: {
+  title: string;
+  empty?: boolean;
+  emptyMessage: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="lcg-card p-5">
+      <div className="lcg-eyebrow mb-3 text-lcg-deep-teal/60">{title}</div>
+      {empty ? (
+        <p className="text-sm text-lcg-body-muted italic">{emptyMessage}</p>
+      ) : (
+        <div className="space-y-3 text-sm">{children}</div>
+      )}
     </div>
   );
 }
@@ -351,8 +397,8 @@ function Field({
 }) {
   return (
     <div>
-      <p className="text-xs text-neutral-500">{label}</p>
-      <p className={`text-sm ${mono ? 'font-mono' : ''} mt-0.5`}>{value}</p>
+      <div className="text-xs text-lcg-body-muted uppercase tracking-wide">{label}</div>
+      <div className={`text-lcg-body mt-0.5 ${mono ? 'font-mono' : ''}`}>{value}</div>
     </div>
   );
 }
@@ -369,7 +415,6 @@ function ProgrammePill({
   const eventHasPassed =
     eventEndIso !== null && new Date(eventEndIso).getTime() < Date.now();
 
-  // Skip entirely if the event is still upcoming and nothing's been decided
   if (!status && !eventHasPassed) return null;
 
   if (status === 'signed_up') {
@@ -392,7 +437,6 @@ function ProgrammePill({
     );
   }
 
-  // status null + event has passed → "To be decided"
   return (
     <span className="inline-block mt-2 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
       Programme: To be decided

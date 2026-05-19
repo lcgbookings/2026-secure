@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -26,22 +27,29 @@ export default async function AdminLayout({
 
   return (
     <div className="min-h-screen">
-      <header className="border-b">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div>
-            <p className="font-semibold">Events Hub</p>
-            <p className="text-xs text-neutral-500">Leadership Communication Group</p>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="text-right text-sm">
-              <p className="font-medium">{adminRow.full_name}</p>
-              <p className="text-xs text-neutral-500">{adminRow.role}</p>
+      <nav className="bg-lcg-deep-teal text-lcg-cream py-3 px-6 border-b border-lcg-deep-teal-dark">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <Link
+            href="/admin"
+            className="font-serif text-lg hover:text-lcg-teal transition"
+          >
+            Events Hub
+          </Link>
+          <div className="flex items-center gap-4 text-sm">
+            <span className="text-lcg-cream/60 hidden md:inline">
+              Leadership Communication Group
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-medium">{adminRow.email}</span>
+              <span className="text-xs text-lcg-cream/40 uppercase tracking-wide">
+                {adminRow.role}
+              </span>
             </div>
             <SignOutButton />
           </div>
         </div>
-      </header>
-      <main className="max-w-6xl mx-auto px-4 py-6">{children}</main>
+      </nav>
+      <main>{children}</main>
     </div>
   );
 }

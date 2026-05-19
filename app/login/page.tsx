@@ -3,6 +3,9 @@
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 
+const INPUT_CLASSES =
+  'mt-1 w-full border border-lcg-deep-teal/15 rounded-lg px-3 py-2 bg-white text-sm focus:outline-none focus:border-lcg-teal focus:ring-1 focus:ring-lcg-teal/20';
+
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
@@ -31,54 +34,62 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center p-8">
-      <div className="w-full max-w-md space-y-6">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold">Events Hub</h1>
-          <p className="text-sm text-neutral-500 mt-1">
-            Leadership Communication Group
-          </p>
+    <main className="min-h-screen flex items-center justify-center px-6 bg-lcg-cream">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-8">
+          <span className="lcg-eyebrow mb-3">Leadership Communication Group</span>
+          <h1 className="font-serif text-3xl text-lcg-deep-teal">Events Hub</h1>
+          <p className="text-sm text-lcg-body-muted mt-2">Sign in to continue</p>
         </div>
 
-        {status === 'sent' ? (
-          <div className="p-6 border border-green-200 bg-green-50 rounded-lg text-center">
-            <p className="font-semibold text-green-800">Check your email</p>
-            <p className="text-sm text-green-700 mt-2">
-              We sent a magic link to {email}. Click it to log in.
-            </p>
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium mb-1">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@leadershipcommunicationgroup.com"
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-neutral-900"
-              />
+        <div className="lcg-card p-8">
+          {status === 'sent' ? (
+            <div className="text-center">
+              <p className="font-serif text-lg text-lcg-deep-teal">Check your email</p>
+              <p className="text-sm text-lcg-body-muted mt-2">
+                We sent a magic link to{' '}
+                <span className="text-lcg-deep-teal font-medium">{email}</span>. Click it
+                to log in.
+              </p>
             </div>
-            <button
-              type="submit"
-              disabled={status === 'sending'}
-              className="w-full py-2 px-4 bg-neutral-900 text-white rounded-md disabled:opacity-50 hover:bg-neutral-800"
-            >
-              {status === 'sending' ? 'Sending...' : 'Send magic link'}
-            </button>
+          ) : (
+            <form onSubmit={handleSubmit}>
+              <label className="block">
+                <span className="text-xs text-lcg-deep-teal/60 uppercase tracking-wide">
+                  Email
+                </span>
+                <input
+                  type="email"
+                  required
+                  name="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@leadershipcommunicationgroup.com"
+                  className={INPUT_CLASSES}
+                />
+              </label>
 
-            {status === 'error' && (
-              <p className="text-sm text-red-600">{errorMessage}</p>
-            )}
-          </form>
-        )}
+              <button
+                type="submit"
+                disabled={status === 'sending'}
+                className={`lcg-btn-primary w-full mt-6 ${
+                  status === 'sending' ? 'opacity-40 cursor-not-allowed' : ''
+                }`}
+              >
+                {status === 'sending' ? 'Sending...' : 'Send magic link'}
+              </button>
 
-        <p className="text-xs text-center text-neutral-500">
-          Internal tool. Access by invitation only.
+              {status === 'error' && (
+                <p className="mt-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  {errorMessage}
+                </p>
+              )}
+            </form>
+          )}
+        </div>
+
+        <p className="text-xs text-lcg-body-muted text-center mt-6">
+          Authorised admins only. Magic link will be emailed to you.
         </p>
       </div>
     </main>
