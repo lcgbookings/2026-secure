@@ -142,6 +142,16 @@ export function labelOutcome(s: string | null): string {
   }[s] ?? s;
 }
 
+export function labelPricingResponse(s: string | null): string {
+  if (!s) return '-';
+  return {
+    open_to_invest: 'Open to investing',
+    not_in_position: 'Not in a position',
+    undecided: 'Undecided',
+    not_asked: 'Not asked',
+  }[s] ?? s;
+}
+
 export function labelProgrammeStatus(s: string | null): string {
   if (!s) return 'Not yet decided';
   return {

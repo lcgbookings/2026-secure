@@ -290,9 +290,19 @@ export default async function AdminHome() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Dashboard</h1>
-        <p className="text-sm text-neutral-500 mt-1">Upcoming events and bookings.</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold">Dashboard</h1>
+          <p className="text-sm text-neutral-500 mt-1">Upcoming events and bookings.</p>
+        </div>
+        <a
+          href="/api/admin/export/cohorts"
+          download
+          className="inline-flex items-center gap-2 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 hover:border-neutral-400 transition"
+        >
+          <span>↓</span>
+          <span>Export to Excel</span>
+        </a>
       </div>
 
       <div className="grid grid-cols-3 gap-4">
