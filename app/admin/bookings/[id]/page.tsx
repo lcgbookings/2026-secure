@@ -18,6 +18,7 @@ import CallConsoleForm, {
   type PricingResponse,
 } from './call-console-form';
 import AssignToEvent from './assign-to-event';
+import { countNoShowsSinceLastAttended } from '@/lib/bookings/no-show-count';
 
 export const dynamic = 'force-dynamic';
 
@@ -141,6 +142,8 @@ export default async function CallConsolePage({
     }
   }
 
+  const priorNoShowCount = await countNoShowsSinceLastAttended(attendee.id, booking.id);
+
   return (
     <div className="space-y-6">
       <div>
@@ -190,6 +193,22 @@ export default async function CallConsolePage({
             label: formatEventDateTime(e.start_time, e.end_time),
           }))}
         />
+      )}
+
+      {priorNoShowCount >= 2 && (
+        <div className="border border-amber-300 bg-amber-50 rounded-lg p-4 mb-4">
+          <div className="flex items-start gap-3">
+            <div className="text-amber-700 text-xl leading-none mt-0.5">⚠</div>
+            <div className="flex-1">
+              <p className="font-semibold text-amber-900 text-sm">
+                Repeat no-show pattern detected
+              </p>
+              <p className="text-sm text-amber-800 mt-1">
+                This customer has {priorNoShowCount} prior no-show{priorNoShowCount === 1 ? '' : 's'} since their last attended session. They will not receive the no-show recovery email sequence if they no-show again. Consider whether to engage on this call.
+              </p>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

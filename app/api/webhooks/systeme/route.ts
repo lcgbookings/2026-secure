@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { normaliseSystemeBooking } from '@/lib/webhooks/systeme/normalise';
 import type { SystemeBookingPayload } from '@/lib/webhooks/systeme/types';
 import { parseRadioLabel } from '@/lib/radio-parser';
+import { countNoShowsSinceLastAttended } from '@/lib/bookings/no-show-count';
 
 // Disable static analysis; this route uses runtime headers and DB writes.
 export const dynamic = 'force-dynamic';
@@ -114,6 +115,26 @@ export async function POST(req: NextRequest) {
       bookingId = existingBooking.id;
       console.log('[systeme webhook] Booking already exists, idempotent return', bookingId);
     } else {
+      // Check for repeat no-show pattern. The new booking doesn't exist yet,
+      // so no exclusion is needed.
+      let flaggedRepeat = false;
+      try {
+        const priorNoShows = await countNoShowsSinceLastAttended(attendee.id);
+        flaggedRepeat = priorNoShows >= 2;
+
+        if (flaggedRepeat) {
+          console.warn(
+            '[systeme-webhook] Flagging booking as repeat no-show pattern: attendee',
+            attendee.id,
+            'has',
+            priorNoShows,
+            'prior no-shows since last attended'
+          );
+        }
+      } catch (err) {
+        console.error('[systeme-webhook] failed to check no-show pattern, defaulting to false:', err);
+      }
+
       const { data: booking, error: bookingError } = await supabase
         .from('bookings')
         .insert({
@@ -126,6 +147,7 @@ export async function POST(req: NextRequest) {
           booking_status: 'confirmed',
           confirmation_status: 'pending',
           attendance_status: 'pending',
+          flagged_repeat_no_show: flaggedRepeat,
         })
         .select('id')
         .single();

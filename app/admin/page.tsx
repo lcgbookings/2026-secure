@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { formatEventDateTime, formatEventDate } from '@/lib/format';
+import { fireNoShowRecoveryWebhook } from '@/lib/webhooks/outbound/no-show-recovery';
 import MarkInviteUpdatedButton from './mark-invite-updated-button';
 
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,7 @@ type BookingRow = {
   created_at?: string;
   last_contact_at?: string | null;
   rescheduled_from_booking_id?: string | null;
+  flagged_repeat_no_show?: boolean | null;
   attendee: Attendee | Attendee[] | null;
   event: EventEmbed | EventEmbed[] | null;
 };
@@ -78,6 +80,28 @@ export default async function AdminHome() {
     }
   } catch (err) {
     console.error('[dashboard auto-flip] threw', err);
+  }
+
+  // Process any no-show bookings that haven't had their webhook fired yet.
+  // This is idempotent: bookings with no_show_recovery_webhook_fired_at set are filtered out.
+  try {
+    const { data: pendingWebhookBookings } = await supabase
+      .from('bookings')
+      .select('id')
+      .eq('attendance_status', 'no_show')
+      .is('no_show_recovery_webhook_fired_at', null);
+
+    if (pendingWebhookBookings && pendingWebhookBookings.length > 0) {
+      for (const booking of pendingWebhookBookings) {
+        try {
+          await fireNoShowRecoveryWebhook(booking.id);
+        } catch (err) {
+          console.error('[dashboard pending-webhook] failed for', booking.id, err);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[dashboard pending-webhook] outer error', err);
   }
 
   // ---------- upcoming events list (drafts excluded) ----------
@@ -154,7 +178,7 @@ export default async function AdminHome() {
   const { data: newToCallRaw } = await supabase
     .from('bookings')
     .select(
-      `id, created_at, last_contact_at,
+      `id, created_at, last_contact_at, flagged_repeat_no_show,
        attendee:attendees!inner (first_name, last_name, email, phone),
        event:events!inner (id, session_label, start_time, end_time, status)`
     )
@@ -310,6 +334,7 @@ export default async function AdminHome() {
         accent="neutral"
         rows={newToCall}
         tail="Tap to call"
+        showRepeatBadge
       />
 
       {/* QUEUE 3: 10-day stale follow-ups */}
@@ -506,12 +531,14 @@ function QueueSection({
   tail,
   accent,
   renderExtra,
+  showRepeatBadge,
 }: {
   title: string;
   rows: BookingRow[];
   tail: string;
   accent: Accent;
   renderExtra?: (b: BookingRow) => string | null;
+  showRepeatBadge?: boolean;
 }) {
   return (
     <div>
@@ -540,6 +567,11 @@ function QueueSection({
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-sm">
                     {a.first_name} {a.last_name}
+                    {showRepeatBadge && b.flagged_repeat_no_show && (
+                      <span className="ml-2 inline-block px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-800 rounded">
+                        Repeat no-show
+                      </span>
+                    )}
                   </p>
                   <p className="text-xs text-neutral-500 truncate">
                     {a.email ?? 'no email'} · {a.phone ?? 'no phone'}
