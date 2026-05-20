@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { formatEventDateTime, formatEventDate } from '@/lib/format';
 import { fireNoShowRecoveryWebhook } from '@/lib/webhooks/outbound/no-show-recovery';
 import MarkInviteUpdatedButton from './mark-invite-updated-button';
+import { WeeklySummary } from './_components/weekly-summary';
 
 export const dynamic = 'force-dynamic';
 
@@ -291,16 +292,23 @@ export default async function AdminHome() {
             <h1 className="font-serif text-3xl text-lcg-deep-teal">Dashboard</h1>
             <p className="text-sm text-lcg-body-muted mt-1">Upcoming events and bookings</p>
           </div>
-          <a
-            href="/api/admin/export/cohorts"
-            download
-            className="lcg-btn-primary"
-          >
-            <span>↓</span>
-            <span className="ml-2">Export to Excel</span>
-          </a>
+          <div className="flex items-center gap-3">
+            <Link href="/admin/analytics" className="lcg-btn-secondary">
+              Analytics
+            </Link>
+            <a
+              href="/api/admin/export/cohorts"
+              download
+              className="lcg-btn-primary"
+            >
+              <span>↓</span>
+              <span className="ml-2">Export to Excel</span>
+            </a>
+          </div>
         </div>
       </header>
+
+      <WeeklySummary />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatTile label="Upcoming bookings" value={totalBookings} tint="cream" />

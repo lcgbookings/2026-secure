@@ -11,6 +11,7 @@ import {
   labelConfirmationStatus,
   labelAttendanceStatus,
 } from '@/lib/format';
+import { computeCohortStats, type CohortStats } from '@/lib/analytics/cohort-stats';
 
 const LONDON_TZ = 'Europe/London';
 const TEAL = 'FF003941';
@@ -62,6 +63,7 @@ type BookingRow = {
 
 type CallAttemptRow = {
   booking_id: string;
+  outcome: string | null;
   whatsapp_video_sent: boolean | null;
 };
 
@@ -196,7 +198,7 @@ export async function buildCohortWorkbook(): Promise<ExcelJS.Workbook> {
       ),
     supabase
       .from('call_attempts')
-      .select('booking_id, whatsapp_video_sent'),
+      .select('booking_id, outcome, whatsapp_video_sent'),
   ]);
 
   const events = (eventsRes.data ?? []) as EventRow[];
@@ -231,7 +233,15 @@ export async function buildCohortWorkbook(): Promise<ExcelJS.Workbook> {
   const eventsById = new Map<string, EventRow>();
   for (const ev of events) eventsById.set(ev.id, ev);
 
-  buildSummarySheet(workbook, events, bookings);
+  const statsByEvent = new Map<string, CohortStats>();
+  for (const ev of events) {
+    const eBookings = bookingsByEvent.get(ev.id) ?? [];
+    const eBookingIds = new Set(eBookings.map((b) => b.id));
+    const eCalls = calls.filter((c) => c.booking_id && eBookingIds.has(c.booking_id));
+    statsByEvent.set(ev.id, computeCohortStats(ev.id, eBookings, eCalls));
+  }
+
+  buildSummarySheet(workbook, events, statsByEvent);
 
   const takenNames = new Set<string>(['Summary']);
   for (const ev of events) {
@@ -243,7 +253,8 @@ export async function buildCohortWorkbook(): Promise<ExcelJS.Workbook> {
       bookingsByEvent.get(ev.id) ?? [],
       callsByBooking,
       bookingsById,
-      eventsById
+      eventsById,
+      statsByEvent.get(ev.id) ?? null
     );
   }
 
@@ -308,7 +319,7 @@ function buildUnassignedSheet(
 function buildSummarySheet(
   workbook: ExcelJS.Workbook,
   events: EventRow[],
-  bookings: BookingRow[]
+  statsByEvent: Map<string, CohortStats>
 ) {
   const sheet = workbook.addWorksheet('Summary');
 
@@ -330,11 +341,9 @@ function buildSummarySheet(
   const headerRow = sheet.addRow(headers);
   styleHeaderRow(headerRow);
 
-  const eventMonth = new Map<string, string>();
   const monthEvents = new Map<string, EventRow[]>();
   for (const ev of events) {
     const key = monthKey(ev.start_time);
-    eventMonth.set(ev.id, key);
     const arr = monthEvents.get(key) ?? [];
     arr.push(ev);
     monthEvents.set(key, arr);
@@ -353,16 +362,21 @@ function buildSummarySheet(
 
   for (const mk of monthKeys) {
     const evs = monthEvents.get(mk) ?? [];
-    const evIds = new Set(evs.map((e) => e.id));
-    const bs = bookings.filter((b) => b.event_id && evIds.has(b.event_id));
 
-    const booked = bs.length;
-    const confirmed = bs.filter(
-      (b) => b.confirmation_status === 'confirmed' || b.attendance_status === 'attended'
-    ).length;
-    const attended = bs.filter((b) => b.attendance_status === 'attended').length;
-    const hot = bs.filter((b) => b.coaching_interest === 'speak_before_leaving').length;
-    const noShow = bs.filter((b) => b.attendance_status === 'no_show').length;
+    let booked = 0;
+    let confirmed = 0;
+    let attended = 0;
+    let hot = 0;
+    let noShow = 0;
+    for (const ev of evs) {
+      const s = statsByEvent.get(ev.id);
+      if (!s) continue;
+      booked += s.booked;
+      confirmed += s.confirmed;
+      attended += s.attended;
+      hot += s.hotCoaching;
+      noShow += s.noShows;
+    }
 
     const sample = evs[0]?.start_time ?? null;
     sheet.addRow([
@@ -464,7 +478,8 @@ function buildCohortSheet(
   rows: BookingRow[],
   callsByBooking: Map<string, { count: number; whatsapp: boolean }>,
   bookingsById: Map<string, BookingRow>,
-  eventsById: Map<string, EventRow>
+  eventsById: Map<string, EventRow>,
+  stats: CohortStats | null
 ) {
   sheet.columns = HEADER_COLUMNS.map((c) => ({ width: c.width }));
 
@@ -477,12 +492,10 @@ function buildCohortSheet(
   titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
   sheet.getRow(1).height = 24;
 
-  const booked = rows.length;
-  const confirmed = rows.filter(
-    (b) => b.confirmation_status === 'confirmed' || b.attendance_status === 'attended'
-  ).length;
-  const attended = rows.filter((b) => b.attendance_status === 'attended').length;
-  const hot = rows.filter((b) => b.coaching_interest === 'speak_before_leaving').length;
+  const booked = stats?.booked ?? 0;
+  const confirmed = stats?.confirmed ?? 0;
+  const attended = stats?.attended ?? 0;
+  const hot = stats?.hotCoaching ?? 0;
 
   sheet.mergeCells(`A2:${lastCol}2`);
   const subCell = sheet.getCell('A2');
