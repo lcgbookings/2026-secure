@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
   formatEventDateTime,
@@ -20,6 +21,7 @@ import CallConsoleForm, {
   type MasterclassOutcome,
 } from './call-console-form';
 import AssignToEvent from './assign-to-event';
+import DataPrivacySection from './data-privacy-section';
 import { countNoShowsSinceLastAttended } from '@/lib/bookings/no-show-count';
 
 export const dynamic = 'force-dynamic';
@@ -68,8 +70,10 @@ export default async function CallConsolePage({
       event_id,
       masterclass_outcome,
       masterclass_outcome_at,
+      newsletter_consent,
+      newsletter_consent_at,
       attendee:attendees!inner (
-        id, first_name, last_name, email, phone, company
+        id, first_name, last_name, email, phone, company, anonymised_at
       ),
       event:events (
         id, session_label, start_time, end_time, venue
@@ -143,6 +147,22 @@ export default async function CallConsolePage({
   }
 
   const priorNoShowCount = await countNoShowsSinceLastAttended(attendee.id, booking.id);
+
+  // Current admin's role — used to gate the anonymise control.
+  // Same auth_user_id lookup pattern as app/admin/layout.tsx.
+  const sessionClient = await createClient();
+  const {
+    data: { user: authUser },
+  } = await sessionClient.auth.getUser();
+  let isSuperAdmin = false;
+  if (authUser) {
+    const { data: currentAdmin } = await supabase
+      .from('admin_users')
+      .select('role')
+      .eq('auth_user_id', authUser.id)
+      .maybeSingle();
+    isSuperAdmin = currentAdmin?.role === 'super_admin';
+  }
 
   const hasPreEvent = !!(
     booking.goals ||
@@ -368,6 +388,15 @@ export default async function CallConsolePage({
           (booking.masterclass_outcome ?? null) as MasterclassOutcome | null
         }
         initialMasterclassOutcomeAt={booking.masterclass_outcome_at ?? null}
+      />
+
+      <DataPrivacySection
+        attendeeId={attendee.id}
+        attendeeFirstName={attendee.first_name ?? 'this attendee'}
+        isSuperAdmin={isSuperAdmin}
+        anonymisedAt={attendee.anonymised_at ?? null}
+        newsletterConsent={booking.newsletter_consent ?? null}
+        newsletterConsentAt={booking.newsletter_consent_at ?? null}
       />
     </div>
   );
