@@ -57,6 +57,7 @@ type BookingRow = {
   referral_source: string | null;
   newsletter_consent: boolean | null;
   flagged_repeat_no_show: boolean | null;
+  masterclass_outcome: string | null;
   rescheduled_from_booking_id: string | null;
   attendee: AttendeeEmbed | AttendeeEmbed[] | null;
 };
@@ -192,7 +193,7 @@ export async function buildCohortWorkbook(): Promise<ExcelJS.Workbook> {
          goals, experience_level, responsibility_level,
          signed_in_at, session_value_rating, most_useful_insight,
          session_relevance, hardest_under_pressure, coaching_interest,
-         referral_source, newsletter_consent, flagged_repeat_no_show,
+         referral_source, newsletter_consent, flagged_repeat_no_show, masterclass_outcome,
          rescheduled_from_booking_id,
          attendee:attendees ( first_name, last_name, email, phone )`
       ),

@@ -1,4 +1,11 @@
 import { createAdminClient } from '@/lib/supabase/admin';
+import {
+  labelReferralSource,
+  labelExperienceLevel,
+  labelResponsibilityLevel,
+  labelRelevance,
+  labelCoachingInterest,
+} from '@/lib/format';
 
 export type CohortStats = {
   eventId: string;
@@ -21,6 +28,11 @@ export type CohortStats = {
     undecided: number;
     not_asked: number;
   };
+  // Conversion (post-event)
+  hotLeads: number;
+  signedUp: number;
+  inConversation: number;
+  conversionRate: number | null;
 };
 
 type BookingRow = {
@@ -31,7 +43,11 @@ type BookingRow = {
   coaching_interest: string | null;
   pricing_disclosed: boolean | null;
   pricing_response: string | null;
+  masterclass_outcome: string | null;
 };
+
+const COHORT_BOOKING_COLUMNS =
+  'id, event_id, confirmation_status, attendance_status, coaching_interest, pricing_disclosed, pricing_response, masterclass_outcome';
 
 type CallAttemptRow = {
   booking_id: string | null;
@@ -66,6 +82,10 @@ function emptyStats(eventId: string): CohortStats {
       undecided: 0,
       not_asked: 0,
     },
+    hotLeads: 0,
+    signedUp: 0,
+    inConversation: 0,
+    conversionRate: null,
   };
 }
 
@@ -93,6 +113,14 @@ export function computeCohortStats(
       const key = b.pricing_response as keyof CohortStats['pricingResponseDistribution'];
       stats.pricingResponseDistribution[key] += 1;
     }
+    if (
+      b.attendance_status === 'attended' &&
+      b.coaching_interest === 'speak_before_leaving'
+    ) {
+      stats.hotLeads += 1;
+    }
+    if (b.masterclass_outcome === 'signed_up') stats.signedUp += 1;
+    if (b.masterclass_outcome === 'in_conversation') stats.inConversation += 1;
   }
 
   for (const c of calls) {
@@ -107,6 +135,7 @@ export function computeCohortStats(
   stats.showUpRate = ratePct(stats.attended, stats.confirmed);
   stats.coachingRate = ratePct(stats.hotCoaching, stats.attended);
   stats.noShowRate = ratePct(stats.noShows, stats.confirmed);
+  stats.conversionRate = ratePct(stats.signedUp, stats.hotLeads);
 
   return stats;
 }
@@ -116,9 +145,7 @@ export async function getCohortStats(eventId: string): Promise<CohortStats> {
 
   const { data: bookings } = await admin
     .from('bookings')
-    .select(
-      'id, event_id, confirmation_status, attendance_status, coaching_interest, pricing_disclosed, pricing_response'
-    )
+    .select(COHORT_BOOKING_COLUMNS)
     .eq('event_id', eventId);
 
   const rows = (bookings ?? []) as BookingRow[];
@@ -147,9 +174,7 @@ export async function getCohortStatsBatch(
 
   const { data: bookings } = await admin
     .from('bookings')
-    .select(
-      'id, event_id, confirmation_status, attendance_status, coaching_interest, pricing_disclosed, pricing_response'
-    )
+    .select(COHORT_BOOKING_COLUMNS)
     .in('event_id', eventIds);
 
   const allBookings = (bookings ?? []) as BookingRow[];
@@ -194,4 +219,201 @@ export async function getCohortStatsBatch(
   }
 
   return result;
+}
+
+// ============================================================
+// Channel funnel
+// ============================================================
+
+export type ChannelFunnel = {
+  channel: string;
+  booked: number;
+  confirmed: number;
+  attended: number;
+  hotLeads: number;
+  signedUp: number;
+  confirmRate: number | null;
+  showUpRate: number | null;
+  signUpRate: number | null;
+};
+
+type ChannelBookingRow = {
+  referral_source: string | null;
+  confirmation_status: string | null;
+  attendance_status: string | null;
+  coaching_interest: string | null;
+  masterclass_outcome: string | null;
+};
+
+export async function getChannelFunnels(opts?: {
+  eventId?: string;
+}): Promise<ChannelFunnel[]> {
+  const admin = createAdminClient();
+
+  let query = admin
+    .from('bookings')
+    .select(
+      'referral_source, confirmation_status, attendance_status, coaching_interest, masterclass_outcome'
+    );
+  if (opts?.eventId) query = query.eq('event_id', opts.eventId);
+
+  const { data } = await query;
+  const rows = (data ?? []) as ChannelBookingRow[];
+
+  type Bucket = {
+    booked: number;
+    confirmed: number;
+    attended: number;
+    hotLeads: number;
+    signedUp: number;
+  };
+  const buckets = new Map<string, Bucket>();
+
+  for (const r of rows) {
+    const key = r.referral_source && r.referral_source.length > 0
+      ? r.referral_source
+      : 'unknown';
+    const bucket =
+      buckets.get(key) ?? {
+        booked: 0,
+        confirmed: 0,
+        attended: 0,
+        hotLeads: 0,
+        signedUp: 0,
+      };
+    bucket.booked += 1;
+    if (r.confirmation_status === 'confirmed' || r.attendance_status === 'attended') {
+      bucket.confirmed += 1;
+    }
+    if (r.attendance_status === 'attended') bucket.attended += 1;
+    if (
+      r.attendance_status === 'attended' &&
+      r.coaching_interest === 'speak_before_leaving'
+    ) {
+      bucket.hotLeads += 1;
+    }
+    if (r.masterclass_outcome === 'signed_up') bucket.signedUp += 1;
+    buckets.set(key, bucket);
+  }
+
+  const funnels: ChannelFunnel[] = [];
+  for (const [key, b] of buckets.entries()) {
+    const channel = key === 'unknown' ? 'Unknown' : labelReferralSource(key);
+    funnels.push({
+      channel,
+      booked: b.booked,
+      confirmed: b.confirmed,
+      attended: b.attended,
+      hotLeads: b.hotLeads,
+      signedUp: b.signedUp,
+      confirmRate: ratePct(b.confirmed, b.booked),
+      showUpRate: ratePct(b.attended, b.confirmed),
+      signUpRate: ratePct(b.signedUp, b.attended),
+    });
+  }
+
+  funnels.sort((a, b) => b.booked - a.booked);
+  return funnels;
+}
+
+// ============================================================
+// Survey insights
+// ============================================================
+
+export type SurveyInsights = {
+  experienceLevelDistribution: Record<string, number>;
+  responsibilityLevelDistribution: Record<string, number>;
+  avgSessionValueRating: number | null;
+  relevanceDistribution: Record<string, number>;
+  coachingInterestDistribution: Record<string, number>;
+  reflectionCount: number;
+  goalsProvidedCount: number;
+  mostUsefulInsightCount: number;
+  hardestUnderPressureCount: number;
+};
+
+type SurveyBookingRow = {
+  experience_level: string | null;
+  responsibility_level: string | null;
+  session_value_rating: number | null;
+  session_relevance: string | null;
+  coaching_interest: string | null;
+  goals: string | null;
+  most_useful_insight: string | null;
+  hardest_under_pressure: string | null;
+  post_session_submitted_at: string | null;
+};
+
+function bump(dist: Record<string, number>, key: string) {
+  dist[key] = (dist[key] ?? 0) + 1;
+}
+
+function hasText(v: string | null | undefined): boolean {
+  return !!v && v.trim().length > 0;
+}
+
+export async function getSurveyInsights(opts?: {
+  eventId?: string;
+}): Promise<SurveyInsights> {
+  const admin = createAdminClient();
+
+  let query = admin
+    .from('bookings')
+    .select(
+      'experience_level, responsibility_level, session_value_rating, session_relevance, coaching_interest, goals, most_useful_insight, hardest_under_pressure, post_session_submitted_at'
+    );
+  if (opts?.eventId) query = query.eq('event_id', opts.eventId);
+
+  const { data } = await query;
+  const rows = (data ?? []) as SurveyBookingRow[];
+
+  const experienceLevelDistribution: Record<string, number> = {};
+  const responsibilityLevelDistribution: Record<string, number> = {};
+  const relevanceDistribution: Record<string, number> = {};
+  const coachingInterestDistribution: Record<string, number> = {};
+
+  let ratingSum = 0;
+  let ratingCount = 0;
+  let reflectionCount = 0;
+  let goalsProvidedCount = 0;
+  let mostUsefulInsightCount = 0;
+  let hardestUnderPressureCount = 0;
+
+  for (const r of rows) {
+    if (r.experience_level) {
+      bump(experienceLevelDistribution, labelExperienceLevel(r.experience_level));
+    }
+    if (r.responsibility_level) {
+      bump(
+        responsibilityLevelDistribution,
+        labelResponsibilityLevel(r.responsibility_level)
+      );
+    }
+    if (r.session_relevance) {
+      bump(relevanceDistribution, labelRelevance(r.session_relevance));
+    }
+    if (r.coaching_interest) {
+      bump(coachingInterestDistribution, labelCoachingInterest(r.coaching_interest));
+    }
+    if (typeof r.session_value_rating === 'number') {
+      ratingSum += r.session_value_rating;
+      ratingCount += 1;
+    }
+    if (r.post_session_submitted_at) reflectionCount += 1;
+    if (hasText(r.goals)) goalsProvidedCount += 1;
+    if (hasText(r.most_useful_insight)) mostUsefulInsightCount += 1;
+    if (hasText(r.hardest_under_pressure)) hardestUnderPressureCount += 1;
+  }
+
+  return {
+    experienceLevelDistribution,
+    responsibilityLevelDistribution,
+    avgSessionValueRating: ratingCount === 0 ? null : ratingSum / ratingCount,
+    relevanceDistribution,
+    coachingInterestDistribution,
+    reflectionCount,
+    goalsProvidedCount,
+    mostUsefulInsightCount,
+    hardestUnderPressureCount,
+  };
 }

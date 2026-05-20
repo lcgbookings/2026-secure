@@ -274,6 +274,62 @@ export default async function AdminHome() {
     }
   }
 
+  // ---------- HOT LEADS ----------
+  // Attendees who flagged programme interest at a session and haven't been resolved.
+  const { data: hotLeadsRaw } = await supabase
+    .from('bookings')
+    .select(
+      `id, pricing_response, masterclass_outcome,
+       attendee:attendees!inner (first_name, last_name, email, phone),
+       event:events!inner (session_label, end_time)`
+    )
+    .eq('coaching_interest', 'speak_before_leaving')
+    .eq('attendance_status', 'attended')
+    .or('masterclass_outcome.is.null,masterclass_outcome.in.(not_yet_reached,in_conversation)');
+
+  type HotLeadRow = {
+    id: string;
+    pricing_response: string | null;
+    masterclass_outcome: string | null;
+    attendee: Attendee | Attendee[] | null;
+    event:
+      | { session_label?: string | null; end_time?: string | null }
+      | { session_label?: string | null; end_time?: string | null }[]
+      | null;
+  };
+
+  type HotLead = {
+    id: string;
+    first_name: string;
+    last_name: string;
+    email: string;
+    phone: string;
+    pricing_response: string | null;
+    masterclass_outcome: string | null;
+    session_label_short: string;
+    end_time_ms: number;
+  };
+
+  const hotLeads: HotLead[] = ((hotLeadsRaw ?? []) as HotLeadRow[])
+    .map((row) => {
+      const a = Array.isArray(row.attendee) ? row.attendee[0] : row.attendee;
+      const ev = Array.isArray(row.event) ? row.event[0] : row.event;
+      if (!a || !ev?.end_time) return null;
+      return {
+        id: row.id,
+        first_name: a.first_name ?? '',
+        last_name: a.last_name ?? '',
+        email: a.email ?? '',
+        phone: a.phone ?? '',
+        pricing_response: row.pricing_response,
+        masterclass_outcome: row.masterclass_outcome,
+        session_label_short: ev.session_label ?? '',
+        end_time_ms: new Date(ev.end_time).getTime(),
+      } as HotLead;
+    })
+    .filter((x): x is HotLead => x !== null)
+    .sort((a, b) => b.end_time_ms - a.end_time_ms);
+
   // ---------- Auto-created events needing review ----------
   const { data: autoCreatedNeedingReview } = await supabase
     .from('events')
@@ -295,6 +351,9 @@ export default async function AdminHome() {
           <div className="flex items-center gap-3">
             <Link href="/admin/analytics" className="lcg-btn-secondary">
               Analytics
+            </Link>
+            <Link href="/admin/marketing" className="lcg-btn-secondary">
+              Marketing
             </Link>
             <a
               href="/api/admin/export/cohorts"
@@ -332,6 +391,59 @@ export default async function AdminHome() {
           </div>
         </div>
       ) : null}
+
+      <section className="lcg-card-dark p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <span className="lcg-eyebrow text-lcg-blue">Revenue priority</span>
+            <h2 className="font-serif text-xl text-lcg-cream">Hot leads</h2>
+            <span className="inline-flex items-center justify-center rounded-full bg-lcg-blue text-lcg-deep-teal text-xs font-bold px-2 py-0.5 min-w-[2rem]">
+              {hotLeads.length}
+            </span>
+          </div>
+        </div>
+
+        {hotLeads.length === 0 ? (
+          <p className="text-sm text-lcg-cream/60 italic">
+            No hot leads waiting. They&apos;ll appear here after a session when attendees flag programme interest.
+          </p>
+        ) : (
+          <ul className="divide-y divide-lcg-cream/10">
+            {hotLeads.map((lead) => (
+              <li key={lead.id} className="py-3 first:pt-0 last:pb-0">
+                <Link
+                  href={`/admin/bookings/${lead.id}`}
+                  className="group flex items-center justify-between gap-4"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-lcg-cream group-hover:text-lcg-blue transition">
+                      {lead.first_name} {lead.last_name}
+                      {lead.pricing_response === 'open_to_invest' && (
+                        <span className="ml-2 inline-block px-1.5 py-0.5 text-[10px] font-medium bg-lcg-blue/20 text-lcg-blue rounded uppercase tracking-wide">
+                          Open to investing
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-lcg-cream/50 truncate mt-0.5">
+                      {lead.email || 'no email'} · {lead.phone || 'no phone'}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="text-sm text-lcg-cream/80">
+                      {lead.session_label_short}
+                    </div>
+                    <div className="text-xs text-lcg-cream/50 mt-0.5">
+                      {lead.masterclass_outcome === 'in_conversation'
+                        ? 'In conversation'
+                        : 'Needs first call'}
+                    </div>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <QueueSection
         title="24-hour reminders"

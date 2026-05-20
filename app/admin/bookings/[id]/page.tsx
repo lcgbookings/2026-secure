@@ -17,6 +17,7 @@ import {
 import CallConsoleForm, {
   type CallAttemptRow,
   type PricingResponse,
+  type MasterclassOutcome,
 } from './call-console-form';
 import AssignToEvent from './assign-to-event';
 import { countNoShowsSinceLastAttended } from '@/lib/bookings/no-show-count';
@@ -65,6 +66,8 @@ export default async function CallConsolePage({
       venue_override,
       pre_event_notes,
       event_id,
+      masterclass_outcome,
+      masterclass_outcome_at,
       attendee:attendees!inner (
         id, first_name, last_name, email, phone, company
       ),
@@ -358,6 +361,13 @@ export default async function CallConsolePage({
           label: formatEventDateTime(e.start_time, e.end_time),
         }))}
         adminUsers={adminUsers}
+        eventHasEnded={
+          !!event?.end_time && new Date(event.end_time).getTime() < Date.now()
+        }
+        initialMasterclassOutcome={
+          (booking.masterclass_outcome ?? null) as MasterclassOutcome | null
+        }
+        initialMasterclassOutcomeAt={booking.masterclass_outcome_at ?? null}
       />
     </div>
   );

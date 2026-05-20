@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { formatRelativeTime } from '@/lib/format';
 
 // ---------- types ----------
 export type CallType =
@@ -28,6 +29,12 @@ export type PricingResponse =
   | 'not_in_position'
   | 'undecided'
   | 'not_asked';
+
+export type MasterclassOutcome =
+  | 'signed_up'
+  | 'in_conversation'
+  | 'declined'
+  | 'not_yet_reached';
 
 export interface CallAttemptRow {
   id: string;
@@ -60,7 +67,17 @@ interface Props {
   callAttempts: CallAttemptRow[];
   upcomingEvents: Array<{ id: string; label: string }>;
   adminUsers: Array<{ id: string; full_name: string }>;
+  eventHasEnded: boolean;
+  initialMasterclassOutcome: MasterclassOutcome | null;
+  initialMasterclassOutcomeAt: string | null;
 }
+
+const MASTERCLASS_OUTCOME_OPTIONS: Array<{ value: MasterclassOutcome; label: string }> = [
+  { value: 'signed_up', label: 'Signed up' },
+  { value: 'in_conversation', label: 'In conversation' },
+  { value: 'declined', label: 'Declined' },
+  { value: 'not_yet_reached', label: 'Not yet reached' },
+];
 
 const CALL_TYPE_LABELS: Record<CallType, string> = {
   pre_event: 'Pre-event call',
@@ -111,8 +128,48 @@ export default function CallConsoleForm({
   callAttempts,
   upcomingEvents,
   adminUsers,
+  eventHasEnded,
+  initialMasterclassOutcome,
+  initialMasterclassOutcomeAt,
 }: Props) {
   const router = useRouter();
+
+  // ---------- masterclass outcome (immediate-save) ----------
+  const [masterclassOutcome, setMasterclassOutcome] = useState<MasterclassOutcome | null>(
+    initialMasterclassOutcome
+  );
+  const [masterclassOutcomeAt, setMasterclassOutcomeAt] = useState<string | null>(
+    initialMasterclassOutcomeAt
+  );
+  const [masterclassSaving, setMasterclassSaving] = useState(false);
+  const [masterclassError, setMasterclassError] = useState('');
+
+  async function updateMasterclassOutcome(next: MasterclassOutcome) {
+    const prevOutcome = masterclassOutcome;
+    const prevAt = masterclassOutcomeAt;
+    const nowIso = new Date().toISOString();
+    setMasterclassOutcome(next);
+    setMasterclassOutcomeAt(nowIso);
+    setMasterclassSaving(true);
+    setMasterclassError('');
+    const res = await fetch(`/api/bookings/${bookingId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        masterclass_outcome: next,
+        masterclass_outcome_at: nowIso,
+      }),
+    });
+    setMasterclassSaving(false);
+    if (res.ok) {
+      router.refresh();
+    } else {
+      setMasterclassOutcome(prevOutcome);
+      setMasterclassOutcomeAt(prevAt);
+      const body = await res.json().catch(() => ({}));
+      setMasterclassError(body.error ?? 'Save failed');
+    }
+  }
 
   // ---------- pricing (immediate-save) ----------
   const [pricingDisclosed, setPricingDisclosed] = useState(initialPricing.pricing_disclosed);
@@ -316,6 +373,52 @@ export default function CallConsoleForm({
           <p className="mt-3 text-sm text-red-200">{pricingError}</p>
         )}
       </section>
+
+      {/* ---------- SECTION 1b: MASTERCLASS OUTCOME (post-event only) ---------- */}
+      {eventHasEnded && (
+        <section className="lcg-card p-6 border-l-4 border-lcg-teal">
+          <div className="lcg-eyebrow mb-1 text-lcg-deep-teal/60">Post-masterclass</div>
+          <h2 className="font-serif text-xl text-lcg-deep-teal mb-1">
+            Masterclass outcome
+          </h2>
+          <p className="text-sm text-lcg-body-muted mb-4">
+            Did this attendee sign up for the programme after the session?
+          </p>
+
+          <div className="flex flex-wrap gap-2">
+            {MASTERCLASS_OUTCOME_OPTIONS.map((opt) => {
+              const selected = masterclassOutcome === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => updateMasterclassOutcome(opt.value)}
+                  disabled={masterclassSaving}
+                  className={
+                    selected
+                      ? 'px-3 py-1.5 rounded-lg text-sm font-medium bg-lcg-teal text-lcg-deep-teal border border-lcg-teal'
+                      : 'px-3 py-1.5 rounded-lg text-sm border border-lcg-deep-teal/20 text-lcg-deep-teal hover:border-lcg-deep-teal/40 transition'
+                  }
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {masterclassOutcomeAt && (
+            <p className="text-xs text-lcg-body-muted mt-3">
+              Last updated {formatRelativeTime(masterclassOutcomeAt)}
+            </p>
+          )}
+
+          {masterclassError && (
+            <p className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              {masterclassError}
+            </p>
+          )}
+        </section>
+      )}
 
       {/* ---------- SECTION 2: LOG A CALL ATTEMPT ---------- */}
       <form onSubmit={submitAttempt} className="lcg-card p-6 space-y-5">

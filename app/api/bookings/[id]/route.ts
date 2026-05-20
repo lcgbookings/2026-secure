@@ -5,6 +5,8 @@ import { createAdminClient } from '@/lib/supabase/admin';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+type MasterclassOutcome = 'signed_up' | 'in_conversation' | 'declined' | 'not_yet_reached';
+
 interface PatchBody {
   event_id?: string | null;
   confirmation_status?: 'pending' | 'confirmed' | 'cancelled' | 'unreachable';
@@ -16,6 +18,8 @@ interface PatchBody {
   pricing_disclosed?: boolean;
   pricing_response?: 'open_to_invest' | 'not_in_position' | 'undecided' | 'not_asked' | null;
   calendar_invite_pending_update?: boolean;
+  masterclass_outcome?: MasterclassOutcome | null;
+  masterclass_outcome_at?: string | null;
 }
 
 const VALID_PRICING_RESPONSES = [
@@ -23,6 +27,13 @@ const VALID_PRICING_RESPONSES = [
   'not_in_position',
   'undecided',
   'not_asked',
+] as const;
+
+const VALID_MASTERCLASS_OUTCOMES = [
+  'signed_up',
+  'in_conversation',
+  'declined',
+  'not_yet_reached',
 ] as const;
 
 export async function PATCH(
@@ -90,6 +101,21 @@ export async function PATCH(
       );
     }
     updates.calendar_invite_pending_update = body.calendar_invite_pending_update;
+  }
+
+  if (body.masterclass_outcome !== undefined) {
+    const v = body.masterclass_outcome;
+    if (v !== null && !(VALID_MASTERCLASS_OUTCOMES as readonly string[]).includes(v)) {
+      return NextResponse.json({ error: 'Invalid masterclass_outcome' }, { status: 400 });
+    }
+    updates.masterclass_outcome = v;
+  }
+  if (body.masterclass_outcome_at !== undefined) {
+    const v = body.masterclass_outcome_at;
+    if (v !== null && (typeof v !== 'string' || Number.isNaN(Date.parse(v)))) {
+      return NextResponse.json({ error: 'Invalid masterclass_outcome_at' }, { status: 400 });
+    }
+    updates.masterclass_outcome_at = v;
   }
 
   if (body.confirmation_status !== undefined) {
