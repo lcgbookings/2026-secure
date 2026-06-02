@@ -52,9 +52,11 @@ export default function SidebarNav({
       <Link
         href="/admin"
         onClick={() => setOpen(false)}
-        className="font-serif text-lg text-lcg-deep-teal px-3 mb-8 hover:opacity-80 transition"
+        className="font-serif text-sm leading-tight text-lcg-deep-teal px-3 mb-8 hover:opacity-80 transition block"
       >
-        Leadership Communication Group
+        Leadership Communication
+        <br />
+        Group
       </Link>
       {navLinks}
       <div className="flex-1" />
@@ -69,7 +71,7 @@ export default function SidebarNav({
 
   return (
     <div className="min-h-screen bg-white">
-      <aside className="hidden md:flex fixed inset-y-0 left-0 w-56 bg-lcg-cream border-r border-lcg-deep-teal/10">
+      <aside className="hidden md:flex fixed inset-y-0 left-0 w-64 bg-lcg-cream border-r border-lcg-deep-teal/10">
         {sidebarInner}
       </aside>
 
@@ -129,7 +131,7 @@ export default function SidebarNav({
         </div>
       )}
 
-      <main className="md:pl-56">
+      <main className="md:pl-72">
         <div className="pt-16 md:pt-0">{children}</div>
       </main>
     </div>
