@@ -2,8 +2,11 @@ import Link from 'next/link';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { formatEventDateTime } from '@/lib/format';
 import { getCohortStats, type CohortStats } from '@/lib/analytics/cohort-stats';
+import { MarketingPanels } from '@/app/admin/_components/marketing-panels';
 
 export const dynamic = 'force-dynamic';
+
+const ALL_COHORTS = 'all';
 
 type EventRow = {
   id: string;
@@ -46,13 +49,19 @@ export default async function AnalyticsPage({
 
   const events = (eventsRaw ?? []) as EventRow[];
 
-  let selectedEventId = queryEventId ?? null;
-  if (!selectedEventId) {
+  let selectedEventId: string | null;
+  if (queryEventId === ALL_COHORTS) {
+    selectedEventId = null;
+  } else if (queryEventId) {
+    selectedEventId = queryEventId;
+  } else {
     const nextUpcoming = [...events]
       .filter((e) => e.status === 'scheduled' && e.end_time && e.end_time > nowIso)
       .sort((a, b) => (a.start_time ?? '').localeCompare(b.start_time ?? ''))[0];
     selectedEventId = nextUpcoming?.id ?? events[0]?.id ?? null;
   }
+
+  const signups = await getSignupCounts();
 
   return (
     <main className="max-w-7xl mx-auto px-6 py-8">
@@ -64,9 +73,9 @@ export default async function AnalyticsPage({
           >
             ← Back to dashboard
           </Link>
-          {queryEventId && (
+          {selectedEventId && (
             <Link
-              href={`/admin/events/${queryEventId}`}
+              href={`/admin/cohorts/${selectedEventId}`}
               className="text-sm text-lcg-body-muted hover:text-lcg-deep-teal inline-block"
             >
               ← View attendee list
@@ -80,21 +89,94 @@ export default async function AnalyticsPage({
         </p>
       </header>
 
+      <SignupsPanel
+        thisWeek={signups.thisWeek}
+        thisMonth={signups.thisMonth}
+        allTime={signups.allTime}
+      />
+
       {events.length === 0 ? (
         <p className="text-sm text-lcg-body-muted italic">
           No scheduled or completed events yet.
         </p>
       ) : (
-        <>
-          <CohortPicker events={events} selectedEventId={selectedEventId} />
-          {selectedEventId && (
-            <CohortAnalytics
-              event={events.find((e) => e.id === selectedEventId) ?? events[0]}
-            />
-          )}
-        </>
+        <CohortPicker events={events} selectedEventId={selectedEventId} />
       )}
+
+      {selectedEventId && (
+        <CohortAnalytics
+          event={events.find((e) => e.id === selectedEventId) ?? events[0]}
+        />
+      )}
+
+      <MarketingPanels eventId={selectedEventId} />
     </main>
+  );
+}
+
+async function getSignupCounts(): Promise<{
+  thisWeek: number;
+  thisMonth: number;
+  allTime: number;
+}> {
+  const admin = createAdminClient();
+  const now = new Date();
+  const weekAgoIso = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+  const [{ count: weekCount }, { count: monthCount }, { count: allCount }] =
+    await Promise.all([
+      admin
+        .from('bookings')
+        .select('id', { count: 'exact', head: true })
+        .eq('masterclass_outcome', 'signed_up')
+        .gte('masterclass_outcome_at', weekAgoIso),
+      admin
+        .from('bookings')
+        .select('id', { count: 'exact', head: true })
+        .eq('masterclass_outcome', 'signed_up')
+        .gte('masterclass_outcome_at', monthStart),
+      admin
+        .from('bookings')
+        .select('id', { count: 'exact', head: true })
+        .eq('masterclass_outcome', 'signed_up'),
+    ]);
+
+  return {
+    thisWeek: weekCount ?? 0,
+    thisMonth: monthCount ?? 0,
+    allTime: allCount ?? 0,
+  };
+}
+
+function SignupsPanel({
+  thisWeek,
+  thisMonth,
+  allTime,
+}: {
+  thisWeek: number;
+  thisMonth: number;
+  allTime: number;
+}) {
+  return (
+    <section className="lcg-card p-6 mb-6">
+      <div className="lcg-eyebrow mb-1 text-lcg-deep-teal/60">Revenue</div>
+      <h2 className="font-serif text-xl text-lcg-deep-teal mb-5">Sign-ups</h2>
+      <div className="grid grid-cols-3 gap-6">
+        <div>
+          <div className="font-serif text-3xl text-lcg-deep-teal">{thisWeek}</div>
+          <div className="text-sm text-lcg-body-muted mt-1">this week</div>
+        </div>
+        <div>
+          <div className="font-serif text-3xl text-lcg-deep-teal">{thisMonth}</div>
+          <div className="text-sm text-lcg-body-muted mt-1">this month</div>
+        </div>
+        <div>
+          <div className="font-serif text-3xl text-lcg-deep-teal">{allTime}</div>
+          <div className="text-sm text-lcg-body-muted mt-1">all time</div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -107,6 +189,12 @@ function CohortPicker({
 }) {
   return (
     <div className="flex flex-wrap gap-2 mb-8">
+      <Link
+        href={`/admin/analytics?eventId=${ALL_COHORTS}`}
+        className={selectedEventId === null ? 'lcg-btn-primary' : 'lcg-btn-secondary'}
+      >
+        All cohorts
+      </Link>
       {events.map((ev) => {
         const active = ev.id === selectedEventId;
         return (

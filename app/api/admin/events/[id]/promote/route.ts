@@ -58,6 +58,6 @@ export async function POST(
 
   // Redirect back to the drafts list so the page refreshes and the promoted
   // event drops off. 303 forces GET on the redirect target.
-  const redirectUrl = new URL('/admin/events?status=draft', req.url);
+  const redirectUrl = new URL('/admin/cohorts?status=draft', req.url);
   return NextResponse.redirect(redirectUrl, { status: 303 });
 }

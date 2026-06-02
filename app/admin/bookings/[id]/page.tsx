@@ -172,7 +172,7 @@ export default async function CallConsolePage({
   const hasReflection = !!booking.post_session_submitted_at;
   const signedIn = !!booking.signed_in_at;
 
-  const backHref = event ? `/admin/events/${event.id}` : '/admin';
+  const backHref = event ? `/admin/cohorts/${event.id}` : '/admin';
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
