@@ -30,6 +30,18 @@ type BookingRow = {
   event: EventEmbed | EventEmbed[] | null;
 };
 
+type Lead = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  pricing_response: string | null;
+  masterclass_outcome: string | null;
+  session_label_short: string;
+  end_time_ms: number;
+};
+
 function unwrapAttendee(a: Attendee | Attendee[] | null): Attendee | null {
   if (!a) return null;
   return Array.isArray(a) ? a[0] ?? null : a;
@@ -274,23 +286,27 @@ export default async function AdminHome() {
     }
   }
 
-  // ---------- HOT LEADS ----------
-  // Attendees who flagged programme interest at a session and haven't been resolved.
-  const { data: hotLeadsRaw } = await supabase
+  // ---------- LEAD PIPELINE ----------
+  // Get all attended leads with coaching_interest set, joined to attendee + event.
+  // Filter out only those marked masterclass_outcome='declined'.
+  const { data: pipelineRaw } = await supabase
     .from('bookings')
     .select(
-      `id, pricing_response, masterclass_outcome,
-       attendee:attendees!inner (first_name, last_name, email, phone),
-       event:events!inner (session_label, end_time)`
+      `id, coaching_interest, masterclass_outcome, pricing_response,
+       attendee:attendees!inner ( first_name, last_name, email, phone ),
+       event:events!inner ( session_label, end_time )`
     )
-    .eq('coaching_interest', 'speak_before_leaving')
     .eq('attendance_status', 'attended')
-    .or('masterclass_outcome.is.null,masterclass_outcome.in.(not_yet_reached,in_conversation)');
+    .in('coaching_interest', ['speak_before_leaving', 'apply_via_website', 'not_at_this_time'])
+    .or(
+      'masterclass_outcome.is.null,masterclass_outcome.in.(not_yet_reached,in_conversation,signed_up)'
+    );
 
-  type HotLeadRow = {
+  type PipelineRow = {
     id: string;
-    pricing_response: string | null;
+    coaching_interest: 'speak_before_leaving' | 'apply_via_website' | 'not_at_this_time' | null;
     masterclass_outcome: string | null;
+    pricing_response: string | null;
     attendee: Attendee | Attendee[] | null;
     event:
       | { session_label?: string | null; end_time?: string | null }
@@ -298,37 +314,80 @@ export default async function AdminHome() {
       | null;
   };
 
-  type HotLead = {
-    id: string;
-    first_name: string;
-    last_name: string;
-    email: string;
-    phone: string;
-    pricing_response: string | null;
-    masterclass_outcome: string | null;
-    session_label_short: string;
-    end_time_ms: number;
-  };
+  const hot: Lead[] = [];
+  const warm: Lead[] = [];
+  const parked: Lead[] = [];
 
-  const hotLeads: HotLead[] = ((hotLeadsRaw ?? []) as HotLeadRow[])
-    .map((row) => {
-      const a = Array.isArray(row.attendee) ? row.attendee[0] : row.attendee;
-      const ev = Array.isArray(row.event) ? row.event[0] : row.event;
-      if (!a || !ev?.end_time) return null;
-      return {
-        id: row.id,
-        first_name: a.first_name ?? '',
-        last_name: a.last_name ?? '',
-        email: a.email ?? '',
-        phone: a.phone ?? '',
-        pricing_response: row.pricing_response,
-        masterclass_outcome: row.masterclass_outcome,
-        session_label_short: ev.session_label ?? '',
-        end_time_ms: new Date(ev.end_time).getTime(),
-      } as HotLead;
-    })
-    .filter((x): x is HotLead => x !== null)
-    .sort((a, b) => b.end_time_ms - a.end_time_ms);
+  for (const row of (pipelineRaw ?? []) as PipelineRow[]) {
+    const a = Array.isArray(row.attendee) ? row.attendee[0] : row.attendee;
+    const ev = Array.isArray(row.event) ? row.event[0] : row.event;
+    if (!a || !ev?.end_time) continue;
+    const lead: Lead = {
+      id: row.id,
+      first_name: a.first_name ?? '',
+      last_name: a.last_name ?? '',
+      email: a.email ?? '',
+      phone: a.phone ?? '',
+      pricing_response: row.pricing_response,
+      masterclass_outcome: row.masterclass_outcome,
+      session_label_short: ev.session_label ?? '',
+      end_time_ms: new Date(ev.end_time).getTime(),
+    };
+    if (row.coaching_interest === 'speak_before_leaving') hot.push(lead);
+    else if (row.coaching_interest === 'apply_via_website') warm.push(lead);
+    else if (row.coaching_interest === 'not_at_this_time') parked.push(lead);
+  }
+
+  const byEndTimeDesc = (a: Lead, b: Lead) => b.end_time_ms - a.end_time_ms;
+  hot.sort(byEndTimeDesc);
+  warm.sort(byEndTimeDesc);
+  parked.sort(byEndTimeDesc);
+
+  // ---------- Past sessions ----------
+  const { data: pastEventsRaw } = await supabase
+    .from('events')
+    .select('id, session_label, start_time')
+    .eq('status', 'completed')
+    .order('start_time', { ascending: false })
+    .limit(8);
+
+  const pastEventIds = (pastEventsRaw ?? []).map((e) => e.id);
+  type PastBookingRow = {
+    event_id: string | null;
+    attendance_status: string | null;
+    coaching_interest: string | null;
+  };
+  const { data: pastBookings } = pastEventIds.length
+    ? await supabase
+        .from('bookings')
+        .select('event_id, attendance_status, coaching_interest')
+        .in('event_id', pastEventIds)
+    : { data: [] as PastBookingRow[] };
+
+  const pastStatsByEvent = new Map<
+    string,
+    { booked: number; attended: number; hot_leads: number }
+  >();
+  for (const b of (pastBookings ?? []) as PastBookingRow[]) {
+    if (!b.event_id) continue;
+    const s =
+      pastStatsByEvent.get(b.event_id) ?? { booked: 0, attended: 0, hot_leads: 0 };
+    s.booked += 1;
+    if (b.attendance_status === 'attended') s.attended += 1;
+    if (b.coaching_interest === 'speak_before_leaving') s.hot_leads += 1;
+    pastStatsByEvent.set(b.event_id, s);
+  }
+
+  const pastSessions = (pastEventsRaw ?? []).map((e) => {
+    const s = pastStatsByEvent.get(e.id) ?? { booked: 0, attended: 0, hot_leads: 0 };
+    return {
+      id: e.id,
+      session_label_short: e.session_label ?? formatEventDate(e.start_time),
+      booked_count: s.booked,
+      attended_count: s.attended,
+      hot_leads_count: s.hot_leads,
+    };
+  });
 
   // ---------- Auto-created events needing review ----------
   const { data: autoCreatedNeedingReview } = await supabase
@@ -393,56 +452,73 @@ export default async function AdminHome() {
       ) : null}
 
       <section className="lcg-card-dark p-6">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-3">
             <span className="lcg-eyebrow text-lcg-blue">Revenue priority</span>
-            <h2 className="font-serif text-xl text-lcg-cream">Hot leads</h2>
-            <span className="inline-flex items-center justify-center rounded-full bg-lcg-blue text-lcg-deep-teal text-xs font-bold px-2 py-0.5 min-w-[2rem]">
-              {hotLeads.length}
-            </span>
+            <h2 className="font-serif text-xl text-lcg-cream">Lead pipeline</h2>
+          </div>
+          <div className="text-xs text-lcg-cream/50">
+            {hot.length} hot · {warm.length} warm · {parked.length} parked
           </div>
         </div>
 
-        {hotLeads.length === 0 ? (
-          <p className="text-sm text-lcg-cream/60 italic">
-            No hot leads waiting. They&apos;ll appear here after a session when attendees flag programme interest.
-          </p>
-        ) : (
-          <ul className="divide-y divide-lcg-cream/10">
-            {hotLeads.map((lead) => (
-              <li key={lead.id} className="py-3 first:pt-0 last:pb-0">
-                <Link
-                  href={`/admin/bookings/${lead.id}`}
-                  className="group flex items-center justify-between gap-4"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium text-lcg-cream group-hover:text-lcg-blue transition">
-                      {lead.first_name} {lead.last_name}
-                      {lead.pricing_response === 'open_to_invest' && (
-                        <span className="ml-2 inline-block px-1.5 py-0.5 text-[10px] font-medium bg-lcg-blue/20 text-lcg-blue rounded uppercase tracking-wide">
-                          Open to investing
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xs text-lcg-cream/50 truncate mt-0.5">
-                      {lead.email || 'no email'} · {lead.phone || 'no phone'}
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-sm text-lcg-cream/80">
-                      {lead.session_label_short}
-                    </div>
-                    <div className="text-xs text-lcg-cream/50 mt-0.5">
-                      {lead.masterclass_outcome === 'in_conversation'
-                        ? 'In conversation'
-                        : 'Needs first call'}
-                    </div>
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
+        {/* HOT section — most prominent */}
+        <div className="mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-lcg-blue text-lcg-deep-teal">
+              Hot
+            </span>
+            <span className="text-sm text-lcg-cream/80">
+              Said: &ldquo;speak before leaving&rdquo;
+            </span>
+            <span className="text-xs text-lcg-cream/50 ml-auto">{hot.length}</span>
+          </div>
+          {hot.length === 0 ? (
+            <p className="text-sm text-lcg-cream/50 italic">
+              None — hot leads appear here after a session.
+            </p>
+          ) : (
+            <LeadList leads={hot} accent="blue" />
+          )}
+        </div>
+
+        {/* WARM section */}
+        <div className="mb-6 pt-5 border-t border-lcg-cream/10">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-amber-400/80 text-lcg-deep-teal">
+              Warm
+            </span>
+            <span className="text-sm text-lcg-cream/80">
+              Said: &ldquo;apply via the website&rdquo;
+            </span>
+            <span className="text-xs text-lcg-cream/50 ml-auto">{warm.length}</span>
+          </div>
+          {warm.length === 0 ? (
+            <p className="text-sm text-lcg-cream/50 italic">None.</p>
+          ) : (
+            <LeadList leads={warm} accent="amber" />
+          )}
+        </div>
+
+        {/* PARKED section — collapsed by default */}
+        <details className="pt-5 border-t border-lcg-cream/10">
+          <summary className="cursor-pointer flex items-center gap-2">
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-lcg-cream/20 text-lcg-cream/80">
+              Parked
+            </span>
+            <span className="text-sm text-lcg-cream/80">
+              Said: &ldquo;not at this time&rdquo;
+            </span>
+            <span className="text-xs text-lcg-cream/50 ml-auto">{parked.length}</span>
+          </summary>
+          <div className="mt-3">
+            {parked.length === 0 ? (
+              <p className="text-sm text-lcg-cream/50 italic">None.</p>
+            ) : (
+              <LeadList leads={parked} accent="grey" />
+            )}
+          </div>
+        </details>
       </section>
 
       <QueueSection
@@ -648,6 +724,39 @@ export default async function AdminHome() {
           </div>
         )}
       </section>
+
+      <section className="lcg-card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-serif text-xl text-lcg-deep-teal">Past sessions</h2>
+          <Link
+            href="/admin/events"
+            className="text-sm text-lcg-body-muted hover:text-lcg-deep-teal"
+          >
+            View all →
+          </Link>
+        </div>
+
+        {pastSessions.length === 0 ? (
+          <p className="text-sm text-lcg-body-muted italic">No completed sessions yet.</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {pastSessions.map((s) => (
+              <Link
+                key={s.id}
+                href={`/admin/events/${s.id}`}
+                className="block p-4 rounded-lg border border-lcg-deep-teal/10 hover:border-lcg-teal hover:bg-lcg-cream/50 transition"
+              >
+                <div className="text-sm font-medium text-lcg-deep-teal">
+                  {s.session_label_short}
+                </div>
+                <div className="text-xs text-lcg-body-muted mt-1">
+                  {s.attended_count} attended · {s.hot_leads_count} hot leads
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -726,6 +835,65 @@ function QueueSection({
         </ul>
       )}
     </section>
+  );
+}
+
+function LeadList({
+  leads,
+  accent,
+}: {
+  leads: Lead[];
+  accent: 'blue' | 'amber' | 'grey';
+}) {
+  void accent;
+  return (
+    <ul className="divide-y divide-lcg-cream/10">
+      {leads.map((lead) => {
+        const isConverted = lead.masterclass_outcome === 'signed_up';
+        const inConversation = lead.masterclass_outcome === 'in_conversation';
+        return (
+          <li key={lead.id} className="py-3 first:pt-0 last:pb-0">
+            <Link
+              href={`/admin/bookings/${lead.id}`}
+              className="group flex items-center justify-between gap-4"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span
+                    className={`font-medium ${
+                      isConverted ? 'text-green-300' : 'text-lcg-cream'
+                    } group-hover:text-lcg-blue transition`}
+                  >
+                    {lead.first_name} {lead.last_name}
+                  </span>
+                  {isConverted && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide bg-green-500/20 text-green-300 rounded">
+                      ✓ Signed up
+                    </span>
+                  )}
+                  {inConversation && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide bg-lcg-blue/20 text-lcg-blue rounded">
+                      In conversation
+                    </span>
+                  )}
+                  {lead.pricing_response === 'open_to_invest' && !isConverted && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide bg-lcg-blue/15 text-lcg-blue/80 rounded">
+                      Open to invest
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-lcg-cream/50 truncate mt-0.5">
+                  {lead.email} · {lead.phone || 'no phone'}
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="text-sm text-lcg-cream/80">{lead.session_label_short}</div>
+              </div>
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

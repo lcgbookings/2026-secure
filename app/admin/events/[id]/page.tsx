@@ -1,19 +1,11 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/admin';
-import {
-  formatEventDateTime,
-  formatMoney,
-  labelConfirmationStatus,
-  labelAttendanceStatus,
-  colourAttendanceStatus,
-} from '@/lib/format';
+import { formatEventDateTime } from '@/lib/format';
 import AttendeeFilters from './attendee-filters';
 import CalendarInvite from './calendar-invite';
 
 export const dynamic = 'force-dynamic';
-
-type ConfirmationStatus = 'confirmed' | 'pending' | 'unreachable' | 'cancelled';
 
 export default async function EventDetailPage({
   params,
@@ -41,10 +33,12 @@ export default async function EventDetailPage({
       `
       id,
       external_booking_id,
-      ticket_type,
       booking_status,
       confirmation_status,
       attendance_status,
+      coaching_interest,
+      masterclass_outcome,
+      session_value_rating,
       goals,
       venue_override,
       pre_event_notes,
@@ -55,8 +49,7 @@ export default async function EventDetailPage({
         last_name,
         email,
         phone
-      ),
-      payments (amount_gross, currency, status)
+      )
     `
     )
     .eq('event_id', eventId)
@@ -109,17 +102,27 @@ export default async function EventDetailPage({
         >
           ← Back to events
         </Link>
-        <span className="lcg-eyebrow mb-2 mt-2 block">{event.status}</span>
-        <h1 className="font-serif text-3xl text-lcg-deep-teal">
-          {event.session_label}
-        </h1>
-        <p className="text-sm text-lcg-body-muted mt-1">
-          {event.venue ?? 'Venue TBC'}
-          {event.start_time && event.end_time
-            ? ` · ${formatEventDateTime(event.start_time, event.end_time)}`
-            : ''}
-          {event.capacity ? ` · capacity ${event.capacity}` : ''}
-        </p>
+        <div className="flex flex-wrap items-end justify-between gap-4 mt-2">
+          <div className="min-w-0">
+            <span className="lcg-eyebrow mb-2 block">{event.status}</span>
+            <h1 className="font-serif text-3xl text-lcg-deep-teal">
+              {event.session_label}
+            </h1>
+            <p className="text-sm text-lcg-body-muted mt-1">
+              {event.venue ?? 'Venue TBC'}
+              {event.start_time && event.end_time
+                ? ` · ${formatEventDateTime(event.start_time, event.end_time)}`
+                : ''}
+              {event.capacity ? ` · capacity ${event.capacity}` : ''}
+            </p>
+          </div>
+          <Link
+            href={`/admin/analytics?eventId=${event.id}`}
+            className="lcg-btn-secondary"
+          >
+            View analytics for this cohort →
+          </Link>
+        </div>
       </header>
 
       {event.status === 'draft' && (
@@ -162,53 +165,79 @@ export default async function EventDetailPage({
               : 'No bookings match your filters.'}
           </p>
         ) : (
-          <ul className="divide-y divide-lcg-deep-teal/10">
+          <div className="space-y-2">
             {filtered.map((b: BookingRow) => {
               const a = Array.isArray(b.attendee) ? b.attendee[0] : b.attendee;
               if (!a) return null;
-              const pay = Array.isArray(b.payments) ? b.payments[0] : null;
               return (
-                <li key={b.id} className="py-3 first:pt-0 last:pb-0">
-                  <Link
-                    href={`/admin/bookings/${b.id}`}
-                    className="group flex justify-between items-center gap-4"
-                  >
+                <Link
+                  key={b.id}
+                  href={`/admin/bookings/${b.id}`}
+                  className="block p-4 rounded-lg border border-lcg-deep-teal/10 hover:border-lcg-teal hover:bg-lcg-cream/30 transition"
+                >
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div className="min-w-0 flex-1">
-                      <div className="font-medium text-lcg-deep-teal group-hover:text-lcg-teal transition">
-                        {a.first_name} {a.last_name}
-                      </div>
-                      <div className="text-xs text-lcg-body-muted truncate">
-                        {a.email}
-                        {a.phone ? ` · ${a.phone}` : ''}
-                      </div>
-                      {pay && (
-                        <div className="text-xs text-lcg-body-muted mt-0.5">
-                          {b.ticket_type ?? 'Ticket'} ·{' '}
-                          {formatMoney(pay.amount_gross, pay.currency)}
-                        </div>
-                      )}
-                    </div>
-                    <div className="text-right shrink-0 space-y-1">
-                      <ConfirmationBadge
-                        status={b.confirmation_status as ConfirmationStatus}
-                      />
-                      {b.attendance_status && b.attendance_status !== 'pending' && (
-                        <div>
-                          <span
-                            className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${colourAttendanceStatus(
-                              b.attendance_status
-                            )}`}
-                          >
-                            {labelAttendanceStatus(b.attendance_status)}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-lcg-deep-teal">
+                          {a.first_name} {a.last_name}
+                        </span>
+
+                        {b.coaching_interest === 'speak_before_leaving' && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-lcg-blue text-lcg-deep-teal">
+                            Hot
                           </span>
+                        )}
+                        {b.coaching_interest === 'apply_via_website' && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-amber-500/80 text-lcg-deep-teal">
+                            Warm
+                          </span>
+                        )}
+                        {b.coaching_interest === 'not_at_this_time' && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-lcg-deep-teal/10 text-lcg-deep-teal/60">
+                            Parked
+                          </span>
+                        )}
+
+                        {b.masterclass_outcome === 'signed_up' && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-green-100 text-green-800">
+                            ✓ Signed up
+                          </span>
+                        )}
+                        {b.masterclass_outcome === 'in_conversation' && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-lcg-blue/15 text-lcg-deep-teal">
+                            In conversation
+                          </span>
+                        )}
+                        {b.masterclass_outcome === 'declined' && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-red-50 text-red-700">
+                            Declined
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-lcg-body-muted mt-1 truncate">
+                        {a.email}
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      {b.session_value_rating !== null && (
+                        <div className="text-sm text-lcg-deep-teal font-medium">
+                          {b.session_value_rating}/10
                         </div>
                       )}
+                      <div className="text-xs text-lcg-body-muted">
+                        {b.attendance_status === 'attended'
+                          ? 'Attended'
+                          : b.attendance_status === 'no_show'
+                            ? 'No-show'
+                            : 'Pending'}
+                      </div>
                     </div>
-                  </Link>
-                </li>
+                  </div>
+                </Link>
               );
             })}
-          </ul>
+          </div>
         )}
       </section>
     </div>
@@ -224,20 +253,3 @@ function StatTile({ label, value }: { label: string; value: number | string }) {
   );
 }
 
-function ConfirmationBadge({ status }: { status: ConfirmationStatus }) {
-  const colours: Record<ConfirmationStatus, string> = {
-    confirmed: 'bg-green-100 text-green-800',
-    pending: 'bg-amber-100 text-amber-800',
-    unreachable: 'bg-neutral-100 text-neutral-700',
-    cancelled: 'bg-red-100 text-red-700',
-  };
-  return (
-    <span
-      className={`inline-block ${
-        colours[status] ?? 'bg-neutral-100 text-neutral-700'
-      } text-xs font-medium px-2 py-0.5 rounded uppercase tracking-wide`}
-    >
-      {labelConfirmationStatus(status)}
-    </span>
-  );
-}

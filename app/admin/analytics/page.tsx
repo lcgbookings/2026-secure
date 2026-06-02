@@ -57,12 +57,22 @@ export default async function AnalyticsPage({
   return (
     <main className="max-w-7xl mx-auto px-6 py-8">
       <header className="mb-8">
-        <Link
-          href="/admin"
-          className="text-sm text-lcg-body-muted hover:text-lcg-deep-teal mb-2 inline-block"
-        >
-          ← Back to dashboard
-        </Link>
+        <div className="flex items-center gap-4 mb-2">
+          <Link
+            href="/admin"
+            className="text-sm text-lcg-body-muted hover:text-lcg-deep-teal inline-block"
+          >
+            ← Back to dashboard
+          </Link>
+          {queryEventId && (
+            <Link
+              href={`/admin/events/${queryEventId}`}
+              className="text-sm text-lcg-body-muted hover:text-lcg-deep-teal inline-block"
+            >
+              ← View attendee list
+            </Link>
+          )}
+        </div>
         <span className="lcg-eyebrow mb-2 mt-2 block">Operational analytics</span>
         <h1 className="font-serif text-3xl text-lcg-deep-teal">Cohort performance</h1>
         <p className="text-sm text-lcg-body-muted mt-1">

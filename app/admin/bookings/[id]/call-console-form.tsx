@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { formatRelativeTime } from '@/lib/format';
@@ -141,8 +141,17 @@ export default function CallConsoleForm({
   const [masterclassOutcomeAt, setMasterclassOutcomeAt] = useState<string | null>(
     initialMasterclassOutcomeAt
   );
-  const [masterclassSaving, setMasterclassSaving] = useState(false);
+  const [masterclassSavingValue, setMasterclassSavingValue] = useState<MasterclassOutcome | null>(
+    null
+  );
   const [masterclassError, setMasterclassError] = useState('');
+  const [masterclassSavedAt, setMasterclassSavedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (masterclassSavedAt === null) return;
+    const t = setTimeout(() => setMasterclassSavedAt(null), 2000);
+    return () => clearTimeout(t);
+  }, [masterclassSavedAt]);
 
   async function updateMasterclassOutcome(next: MasterclassOutcome) {
     const prevOutcome = masterclassOutcome;
@@ -150,7 +159,7 @@ export default function CallConsoleForm({
     const nowIso = new Date().toISOString();
     setMasterclassOutcome(next);
     setMasterclassOutcomeAt(nowIso);
-    setMasterclassSaving(true);
+    setMasterclassSavingValue(next);
     setMasterclassError('');
     const res = await fetch(`/api/bookings/${bookingId}`, {
       method: 'PATCH',
@@ -160,8 +169,9 @@ export default function CallConsoleForm({
         masterclass_outcome_at: nowIso,
       }),
     });
-    setMasterclassSaving(false);
+    setMasterclassSavingValue(null);
     if (res.ok) {
+      setMasterclassSavedAt(Date.now());
       router.refresh();
     } else {
       setMasterclassOutcome(prevOutcome);
@@ -176,37 +186,57 @@ export default function CallConsoleForm({
   const [pricingResponse, setPricingResponse] = useState<PricingResponse>(
     initialPricing.pricing_response ?? 'not_asked'
   );
-  const [pricingStatus, setPricingStatus] = useState<'idle' | 'saving' | 'error'>('idle');
+  const [pricingBusy, setPricingBusy] = useState<
+    'disclosure' | PricingResponse | null
+  >(null);
   const [pricingError, setPricingError] = useState('');
+  const [pricingSavedAt, setPricingSavedAt] = useState<number | null>(null);
 
-  async function patchPricing(updates: {
-    pricing_disclosed?: boolean;
-    pricing_response?: PricingResponse;
-  }) {
-    setPricingStatus('saving');
+  useEffect(() => {
+    if (pricingSavedAt === null) return;
+    const t = setTimeout(() => setPricingSavedAt(null), 2000);
+    return () => clearTimeout(t);
+  }, [pricingSavedAt]);
+
+  async function handleDisclosureChange(next: boolean) {
+    const prev = pricingDisclosed;
+    setPricingDisclosed(next);
+    setPricingBusy('disclosure');
     setPricingError('');
     const res = await fetch(`/api/bookings/${bookingId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
+      body: JSON.stringify({ pricing_disclosed: next }),
     });
+    setPricingBusy(null);
     if (res.ok) {
-      setPricingStatus('idle');
+      setPricingSavedAt(Date.now());
       router.refresh();
     } else {
+      setPricingDisclosed(prev);
       const body = await res.json().catch(() => ({}));
-      setPricingStatus('error');
       setPricingError(body.error ?? 'Save failed');
     }
   }
-
-  async function handleDisclosureChange(next: boolean) {
-    setPricingDisclosed(next);
-    await patchPricing({ pricing_disclosed: next });
-  }
   async function handlePricingResponseChange(next: PricingResponse) {
+    const prev = pricingResponse;
     setPricingResponse(next);
-    await patchPricing({ pricing_response: next });
+    setPricingBusy(next);
+    setPricingError('');
+    const res = await fetch(`/api/bookings/${bookingId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pricing_response: next }),
+    });
+    setPricingBusy(null);
+    if (res.ok) {
+      setPricingSavedAt(Date.now());
+      router.refresh();
+    } else {
+      setPricingResponse(prev);
+      const body = await res.json().catch(() => ({}));
+      setPricingError(body.error ?? 'Save failed');
+    }
   }
 
   // ---------- call attempt ----------
@@ -313,7 +343,14 @@ export default function CallConsoleForm({
     <div className="space-y-6">
       {/* ---------- SECTION 1: PRICING QUALIFIER ---------- */}
       <section className="lcg-card-dark p-6 bg-lcg-deep-teal/95">
-        <div className="lcg-eyebrow text-lcg-blue mb-1">Pricing qualifier</div>
+        <div className="flex items-center gap-3 mb-1">
+          <span className="lcg-eyebrow text-lcg-blue">Pricing qualifier</span>
+          {pricingSavedAt !== null && (
+            <span className="inline-flex items-center gap-1 text-xs text-green-300 font-medium animate-fade-in">
+              ✓ Saved
+            </span>
+          )}
+        </div>
         <h2 className="font-serif text-xl text-lcg-cream mb-4">
           Disclose before you confirm
         </h2>
@@ -323,7 +360,7 @@ export default function CallConsoleForm({
             type="checkbox"
             checked={pricingDisclosed}
             onChange={(e) => handleDisclosureChange(e.target.checked)}
-            disabled={pricingStatus === 'saving'}
+            disabled={pricingBusy !== null}
             className="mt-1 accent-lcg-teal"
           />
           <span className="text-sm text-lcg-cream/90">
@@ -356,7 +393,7 @@ export default function CallConsoleForm({
                     className="sr-only"
                     checked={selected}
                     onChange={() => handlePricingResponseChange(opt.value)}
-                    disabled={!pricingDisclosed || pricingStatus === 'saving'}
+                    disabled={!pricingDisclosed || pricingBusy !== null}
                   />
                   {opt.label}
                 </label>
@@ -377,7 +414,14 @@ export default function CallConsoleForm({
       {/* ---------- SECTION 1b: MASTERCLASS OUTCOME (post-event only) ---------- */}
       {eventHasEnded && (
         <section className="lcg-card p-6 border-l-4 border-lcg-teal">
-          <div className="lcg-eyebrow mb-1 text-lcg-deep-teal/60">Post-masterclass</div>
+          <div className="flex items-center gap-3 mb-1">
+            <span className="lcg-eyebrow text-lcg-deep-teal/60">Post-masterclass</span>
+            {masterclassSavedAt !== null && (
+              <span className="inline-flex items-center gap-1 text-xs text-green-700 font-medium animate-fade-in">
+                ✓ Saved
+              </span>
+            )}
+          </div>
           <h2 className="font-serif text-xl text-lcg-deep-teal mb-1">
             Masterclass outcome
           </h2>
@@ -393,7 +437,7 @@ export default function CallConsoleForm({
                   key={opt.value}
                   type="button"
                   onClick={() => updateMasterclassOutcome(opt.value)}
-                  disabled={masterclassSaving}
+                  disabled={masterclassSavingValue !== null}
                   className={
                     selected
                       ? 'px-3 py-1.5 rounded-lg text-sm font-medium bg-lcg-teal text-lcg-deep-teal border border-lcg-teal'
